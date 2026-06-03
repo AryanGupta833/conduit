@@ -4,5 +4,8 @@ public enum TaskExecutionStatus {
     PENDING,
     RUNNING,
     SUCCESS,
-    FAILED
+    FAILED,
+    RETRYING,
+    SKIPPED,
+    TIMEOUT
 }

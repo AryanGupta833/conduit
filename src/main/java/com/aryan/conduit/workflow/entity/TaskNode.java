@@ -19,4 +19,6 @@ public class TaskNode {
     @ManyToOne
     @JoinColumn
     private Workflow workflow;
+    private Integer timeoutSeconds;
+    private Integer maxRetries;
 }

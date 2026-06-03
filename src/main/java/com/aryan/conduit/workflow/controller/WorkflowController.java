@@ -9,6 +9,8 @@ import com.aryan.conduit.workflow.service.WorkflowService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
+
 @RestController
 @RequiredArgsConstructor
 @RequestMapping("/api/workflows")
@@ -29,5 +31,9 @@ public class WorkflowController {
     @PostMapping("/{id}/execute")
     public Long executeWorkflow(@PathVariable Long id){
         return executionService.startWorkflow(id);
+    }
+    @GetMapping("/{id}/stages")
+    public List<List<Long>> getStages(@PathVariable Long id){
+        return workflowGraphService.generateExecutionStages(id);
     }
 }

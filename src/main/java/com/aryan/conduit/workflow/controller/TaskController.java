@@ -25,6 +25,7 @@ public class TaskController {
                 .orElseThrow(()->new RuntimeException("Workflow not found"));
         TaskNode task=TaskNode.builder().
                 name(request.name()).
+                timeoutSeconds(request.timeoutSeconds()).maxRetries(request.maxRetries()).
                 workflow(workflow).
         build();
 
