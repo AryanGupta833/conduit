@@ -1,9 +1,6 @@
 package com.aryan.conduit.execution.service;
 
-import com.aryan.conduit.execution.entity.TaskExecution;
-import com.aryan.conduit.execution.entity.TaskExecutionStatus;
-import com.aryan.conduit.execution.entity.WorkflowExecution;
-import com.aryan.conduit.execution.entity.WorkflowExecutionStatus;
+import com.aryan.conduit.execution.entity.*;
 import com.aryan.conduit.execution.repository.TaskExecutionRepository;
 import com.aryan.conduit.execution.repository.WorkflowExecutionRepository;
 import com.aryan.conduit.workflow.dto.TaskFuture;
@@ -26,12 +23,13 @@ public class TaskRunnerService {
     private final TaskExecutionRepository taskExecutionRepository;
     private final WorkflowExecutionRepository workflowExecutionRepository;
     private final TaskExecutionService taskExecutionService;
+    private final ExecutionLogService executionLogService;
 
 
 
     private void executeTask(Long taskExecutionId)
             throws InterruptedException {
-
+        executionLogService.log(taskExecutionId, LogLevel.INFO,"Task Started");
         taskExecutionService.markRunning(taskExecutionId);
         System.out.println(Thread.currentThread().getName()+
                 " executing task "+taskExecutionId);
@@ -39,6 +37,7 @@ public class TaskRunnerService {
         if(taskExecutionId%2==0){
             throw new RuntimeException("Simulated Task Failure");
         }
+        executionLogService.log(taskExecutionId,LogLevel.INFO,"Task Completed Successfully");
         taskExecutionService.markSuccess(taskExecutionId);
         System.out.println(Thread.currentThread().getName()+
                 " completed task "+taskExecutionId);
@@ -135,6 +134,7 @@ public class TaskRunnerService {
 
                     }
                     catch (java.util.concurrent.TimeoutException e) {
+                        executionLogService.log(taskFuture.taskExecutionId(),LogLevel.ERROR,"Task Timed Out");
 
                         taskExecutionService.markTimeout(
                                 taskFuture.taskExecutionId()
@@ -174,6 +174,7 @@ public class TaskRunnerService {
                     stages,
                     taskExecutionMap
             );
+
 
             workflowExecution.setStatus(
                     WorkflowExecutionStatus.FAILED);
@@ -227,8 +228,11 @@ public class TaskRunnerService {
             catch (Exception e){
 
                 attempts++;
+                executionLogService.log(taskExecutionId,LogLevel.WARN,"Retry Attempt "+attempts);
 
                 if(attempts >= maxRetries){
+
+                    executionLogService.log(taskExecutionId,LogLevel.ERROR,"Task Failed");
 
                     taskExecutionService
                             .markFailed(taskExecutionId);
@@ -263,7 +267,7 @@ public class TaskRunnerService {
 
             for(Long taskId:stage){
                 Long taskExecutionId=taskExecutionMap.get(taskId).getId();
-
+                executionLogService.log(taskExecutionId,LogLevel.WARN,"Task Skipped");
                 taskExecutionService.markSkipped(taskExecutionId);
                 System.out.println("Skipped task "+taskExecutionId);
             }

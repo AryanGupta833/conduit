@@ -20,4 +20,7 @@ public class Workflow {
     @Enumerated(EnumType.STRING)
     private WorkflowStatus status;
     private LocalDateTime createdAt;
+    private String cronExpression;
+    private Boolean active;
+    private LocalDateTime lastScheduledRun;
 }

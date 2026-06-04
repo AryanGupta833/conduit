@@ -13,11 +13,13 @@ import java.time.LocalDateTime;
 public class WorkflowService {
     private final WorkflowRepository workflowRepository;
 
-    public Workflow createWorkflow(String name){
+    public Workflow createWorkflow(String name,String cronExpression){
         Workflow workflow=Workflow.builder().
                 name(name)
                 .status(WorkflowStatus.DRAFT)
                 .createdAt(LocalDateTime.now())
+                .cronExpression(cronExpression)
+                .active(true)
                 .build();
         return workflowRepository.save(workflow);
     }

@@ -3,15 +3,21 @@ package com.aryan.conduit.workflow.service;
 
 import com.aryan.conduit.common.util.DagValidator;
 import com.aryan.conduit.workflow.dto.ExecutionPlan;
+import com.aryan.conduit.workflow.dto.GraphEdgeResponse;
+import com.aryan.conduit.workflow.dto.GraphNodeResponse;
+import com.aryan.conduit.workflow.dto.WorkflowGraphResponse;
 import com.aryan.conduit.workflow.entity.Dependency;
 import com.aryan.conduit.workflow.entity.TaskNode;
 import com.aryan.conduit.workflow.repository.DependencyRepository;
 import com.aryan.conduit.workflow.repository.TaskNodeRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.java.Log;
+import org.springframework.scheduling.config.Task;
 import org.springframework.stereotype.Service;
 
+import javax.swing.event.DocumentEvent;
 import java.util.*;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -105,5 +111,22 @@ public class WorkflowGraphService {
             stages.add(currentStage);
         }
         return stages;
+     }
+
+     public WorkflowGraphResponse getWorkflowGraph(Long workflowId){
+        List<TaskNode> tasks=taskNodeRepository.findByWorkflow_Id(workflowId);
+
+        List<Dependency> dependencies=dependencyRepository.findByParent_Workflow_Id(workflowId);
+        List<GraphNodeResponse> nodes=tasks.stream().map(task->new GraphNodeResponse(task.getId(), task.getName())).toList();
+        List<GraphEdgeResponse> edges=dependencies.stream().map(dependency -> new GraphEdgeResponse(dependency.getParent().getId(),dependency.getChild().getId())).toList();
+
+        return new WorkflowGraphResponse(nodes,edges);
+     }
+
+     public List<Long> getRootTasks(Long workflowId){
+        List<TaskNode> tasks=taskNodeRepository.findByWorkflow_Id(workflowId);
+        Set<Long> childTaskIds=dependencyRepository.findAll().stream().map(dependency -> dependency.getChild().getId()).collect(Collectors.toSet());
+
+        return tasks.stream().map(TaskNode::getId).filter(taskId->!childTaskIds.contains(taskId)).toList();
      }
 }

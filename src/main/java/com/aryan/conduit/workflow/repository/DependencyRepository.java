@@ -8,4 +8,6 @@ import java.util.List;
 
 public interface DependencyRepository extends JpaRepository<Dependency,Long> {
     List<Dependency> findByParent_Workflow_Id(Long workflowId);
+    List<Dependency> findByChild_Id(Long childId);
+    List<Dependency> findByParent_Id(Long parentId);
 }
