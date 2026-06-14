@@ -42,6 +42,7 @@ public class DependencyController {
                 .parent(parent)
                 .child(child)
                 .condition(request.condition())
+                .expression(request.expression())
                 .build();
 
         return dependencyRepository.save(dependency);
@@ -52,20 +53,20 @@ public class DependencyController {
         return workflowGraphService.getRootTasks(workflowId);
     }
 
-    @GetMapping("/unlock")
-    public Object unlock(){
-        RuntimeExecutionContext context= executionRuntimeService.initializeContext(6L);
-        context.getTaskStatuses().put(15L, TaskExecutionStatus.FAILED);
-        executionRuntimeService.evaluateChildren(15L,context);
-
-        return context.getReadyQueue();
-    }
+//    @GetMapping("/unlock")
+//    public Object unlock(){
+//        RuntimeExecutionContext context= executionRuntimeService.initializeContext(6L);
+//        context.getTaskStatuses().put(15L, TaskExecutionStatus.FAILED);
+//        executionRuntimeService.evaluateChildren(15L,context);
+//
+//        return context.getReadyQueue();
+//    }
 
     @GetMapping("/test18")
     public Boolean test18(){
         Map<Long,TaskExecutionStatus> statuses=new HashMap<>();
         statuses.put(16L,TaskExecutionStatus.SUCCESS);
         statuses.put(17L,TaskExecutionStatus.SUCCESS);
-        return executionRuntimeService.canRun(18L,statuses);
+        return executionRuntimeService.canRun(336L,18L,statuses);
     }
 }

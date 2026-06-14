@@ -1,5 +1,6 @@
 package com.aryan.conduit.workflow.controller;
 
+import com.aryan.conduit.execution.entity.JoinCondition;
 import com.aryan.conduit.workflow.dto.CreateTaskRequest;
 import com.aryan.conduit.workflow.entity.TaskNode;
 import com.aryan.conduit.workflow.entity.Workflow;
@@ -27,6 +28,7 @@ public class TaskController {
                 name(request.name()).
                 timeoutSeconds(request.timeoutSeconds()).maxRetries(request.maxRetries()).
                 workflow(workflow).
+        joinCondition(JoinCondition.ALL_PARENTS).
         build();
 
         return taskNodeRepository.save(task)

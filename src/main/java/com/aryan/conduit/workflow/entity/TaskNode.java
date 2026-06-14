@@ -1,6 +1,7 @@
 package com.aryan.conduit.workflow.entity;
 
 
+import com.aryan.conduit.execution.entity.JoinCondition;
 import jakarta.persistence.*;
 import lombok.*;
 
@@ -21,4 +22,10 @@ public class TaskNode {
     private Workflow workflow;
     private Integer timeoutSeconds;
     private Integer maxRetries;
+    @Enumerated(EnumType.STRING)
+    @Builder.Default
+    private JoinCondition joinCondition=JoinCondition.ALL_PARENTS;
+
+
+
 }

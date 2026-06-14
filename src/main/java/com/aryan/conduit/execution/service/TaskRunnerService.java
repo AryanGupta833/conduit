@@ -10,6 +10,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
@@ -24,10 +25,11 @@ public class TaskRunnerService {
     private final WorkflowExecutionRepository workflowExecutionRepository;
     private final TaskExecutionService taskExecutionService;
     private final ExecutionLogService executionLogService;
+    private final TaskOutputService taskOutputService;
 
 
 
-    private void executeTask(Long taskExecutionId)
+    private Map<String,Object> executeTask(Long taskExecutionId)
             throws InterruptedException {
         executionLogService.log(taskExecutionId, LogLevel.INFO,"Task Started");
         taskExecutionService.markRunning(taskExecutionId);
@@ -39,8 +41,11 @@ public class TaskRunnerService {
         }
         executionLogService.log(taskExecutionId,LogLevel.INFO,"Task Completed Successfully");
         taskExecutionService.markSuccess(taskExecutionId);
+        Map<String,Object> output=new HashMap<>();
+        output.put("prediction","BUY");
         System.out.println(Thread.currentThread().getName()+
                 " completed task "+taskExecutionId);
+        return output;
     }
 
     public void runExecution(
@@ -194,7 +199,7 @@ public class TaskRunnerService {
         }
     }
 
-    private void executeWithRetry(
+    public void executeWithRetry(
             Long taskExecutionId,
             Integer maxRetries)
             throws InterruptedException {
@@ -209,7 +214,12 @@ public class TaskRunnerService {
 
             try{
 
-                executeTask(taskExecutionId);
+                Map<String,Object> output=executeTask(taskExecutionId);
+                TaskExecution taskExecution=taskExecutionRepository.findById(taskExecutionId).orElseThrow();
+
+                Long workflowExecutionId=taskExecution.getWorkflowExecution().getId();
+                taskOutputService.storeOutput(workflowExecutionId,taskExecution.getTaskNode().getId(),output);
+
 
                 return;
             }

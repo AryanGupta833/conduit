@@ -1,7 +1,9 @@
 package com.aryan.conduit.workflow.controller;
 
 import com.aryan.conduit.execution.entity.TaskExecutionStatus;
+import com.aryan.conduit.execution.service.ExecutionCreationService;
 import com.aryan.conduit.execution.service.ExecutionRuntimeService;
+import com.aryan.conduit.workflow.dto.ExecutionContext;
 import com.aryan.conduit.workflow.dto.RuntimeExecutionContext;
 import com.aryan.conduit.workflow.service.RuntimeWorkflowExecutor;
 import lombok.RequiredArgsConstructor;
@@ -20,12 +22,13 @@ import java.util.Objects;
 public class RuntimeController {
     private final ExecutionRuntimeService executionRuntimeService;
     private final RuntimeWorkflowExecutor runtimeWorkflowExecutor;
+    private final ExecutionCreationService executionCreationService;
 
     @GetMapping("/test")
     public Boolean test(){
         Map<Long, TaskExecutionStatus> statuses=new HashMap<>();
         statuses.put(15L,TaskExecutionStatus.FAILED);
-        return executionRuntimeService.canRun(16L,statuses);
+        return executionRuntimeService.canRun(469L,16L,statuses);
     }
 
     @GetMapping("/queue/{workflowId}")
@@ -38,5 +41,13 @@ public class RuntimeController {
     public String simulate(@PathVariable Long workflowId){
         runtimeWorkflowExecutor.simulate(workflowId);
         return "Simulation complete";
+    }
+
+    @GetMapping("/execute/{workflowId}")
+    public String execute(@PathVariable Long workflowId){
+        ExecutionContext context=executionCreationService.createExecution(workflowId);
+        runtimeWorkflowExecutor.execute(context.workflowExecution().getId(),workflowId);
+
+        return "Done";
     }
 }

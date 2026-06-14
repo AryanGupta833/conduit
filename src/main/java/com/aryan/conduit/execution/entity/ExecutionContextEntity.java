@@ -9,17 +9,17 @@ import lombok.*;
 @Setter
 @NoArgsConstructor
 @AllArgsConstructor
-@RequiredArgsConstructor
 @Builder
-public class ExecutionContext {
+public class ExecutionContextEntity {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
     @OneToOne
+    @JoinColumn(name="workflow_execution_id")
     private WorkflowExecution workflowExecution;
 
-    @Lob
+    @Column(columnDefinition = "TEXT")
     private String variableJson;
 }

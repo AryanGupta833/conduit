@@ -28,4 +28,6 @@ public class Dependency {
     @Enumerated(EnumType.STRING)
     private DependencyCondition condition;
 
+    private String expression;
+
 }

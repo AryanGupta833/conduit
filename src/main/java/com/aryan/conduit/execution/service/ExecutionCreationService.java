@@ -1,10 +1,8 @@
 package com.aryan.conduit.execution.service;
 
 
-import com.aryan.conduit.execution.entity.TaskExecution;
-import com.aryan.conduit.execution.entity.TaskExecutionStatus;
-import com.aryan.conduit.execution.entity.WorkflowExecution;
-import com.aryan.conduit.execution.entity.WorkflowExecutionStatus;
+import com.aryan.conduit.execution.entity.*;
+import com.aryan.conduit.execution.repository.ExecutionContextRepository;
 import com.aryan.conduit.execution.repository.TaskExecutionRepository;
 import com.aryan.conduit.execution.repository.WorkflowExecutionRepository;
 import com.aryan.conduit.workflow.dto.ExecutionContext;
@@ -31,6 +29,7 @@ public class ExecutionCreationService {
     private final TaskExecutionRepository taskExecutionRepository;
     private final TaskNodeRepository taskNodeRepository;
     private final WorkflowGraphService workflowGraphService;
+    private final ExecutionContextRepository executionContextRepository;
 
     @Transactional
     public ExecutionContext createExecution(Long workflowId){
@@ -51,6 +50,13 @@ public class ExecutionCreationService {
 
         workflowExecution =
                 workflowExecutionRepository.save(workflowExecution);
+
+        ExecutionContextEntity executionContext=ExecutionContextEntity.builder()
+                .workflowExecution(workflowExecution)
+                .variableJson("{}")
+                .build();
+
+        executionContextRepository.save(executionContext);
 
         Map<Long, TaskExecution> taskExecutionMap =
                 new HashMap<>();
