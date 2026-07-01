@@ -1,6 +1,8 @@
 package com.aryan.conduit.workflow.service;
 
 
+import com.aryan.conduit.execution.entity.WorkflowExecutionStatus;
+import com.aryan.conduit.execution.repository.WorkflowExecutionRepository;
 import com.aryan.conduit.execution.service.ExecutionService;
 import com.aryan.conduit.workflow.dto.CreateWorkflowRequest;
 import com.aryan.conduit.workflow.entity.Workflow;
@@ -18,6 +20,7 @@ import java.util.List;
 public class WorkflowSchedularService {
     private final WorkflowRepository workflowRepository;
     private final ExecutionService  executionService;
+    private final WorkflowExecutionRepository workflowExecutionRepository;
 
     @Scheduled(fixedRate = 10000)
     public void checkWorkflows(){
@@ -30,7 +33,15 @@ public class WorkflowSchedularService {
 
             LocalDateTime nextRun=cron.next(baseTime);
             if(nextRun!=null&&!nextRun.isAfter(now)){
-                executionService.startWorkflow(workflow.getId());
+                boolean running= workflowExecutionRepository.existsByWorkflow_IdAndStatus(workflow.getId(), WorkflowExecutionStatus.RUNNING);
+
+                System.out.println("Workflow "+workflow.getId()+" running "+running);
+
+                if(running){
+                    System.out.println("Workflow "+workflow.getId()+" already running Skipping");
+                    continue;
+                }
+                executionService.startWorkflowAsync(workflow.getId());
                 workflow.setLastScheduledRun(nextRun);
                 workflowRepository.save(workflow);
             }

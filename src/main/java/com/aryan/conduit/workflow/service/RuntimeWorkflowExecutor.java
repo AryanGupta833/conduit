@@ -45,6 +45,10 @@ public class RuntimeWorkflowExecutor {
 
             try {
                 taskRunnerService.executeWithRetry(taskExecution.getId(), taskExecution.getTaskNode().getMaxRetries());
+                System.out.println(
+                        "executeWithRetry returned for task "
+                                + taskId
+                );
                 context.getTaskStatuses().put(taskId,TaskExecutionStatus.SUCCESS);
                 System.out.println("Task "+taskId+" marked SUCCESS");
             }

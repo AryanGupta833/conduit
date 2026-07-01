@@ -4,6 +4,7 @@ import com.aryan.conduit.execution.entity.*;
 import com.aryan.conduit.execution.repository.TaskExecutionRepository;
 import com.aryan.conduit.execution.repository.WorkflowExecutionRepository;
 import com.aryan.conduit.workflow.dto.TaskFuture;
+import jakarta.persistence.criteria.CriteriaBuilder;
 import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -26,6 +27,7 @@ public class TaskRunnerService {
     private final TaskExecutionService taskExecutionService;
     private final ExecutionLogService executionLogService;
     private final TaskOutputService taskOutputService;
+    private final CircuitBreakerTaskService circuitBreakerTaskService;
 
 
 
@@ -36,12 +38,22 @@ public class TaskRunnerService {
         System.out.println(Thread.currentThread().getName()+
                 " executing task "+taskExecutionId);
         Thread.sleep(15000);
-        if(taskExecutionId%2==0){
-            throw new RuntimeException("Simulated Task Failure");
+        if(true){
+            throw new RuntimeException("Forced Failure");
         }
         executionLogService.log(taskExecutionId,LogLevel.INFO,"Task Completed Successfully");
         taskExecutionService.markSuccess(taskExecutionId);
-        Map<String,Object> output=new HashMap<>();
+        final Map<String,Object>[] outputHolder=new Map[1];
+        circuitBreakerTaskService.executeTask(()->{
+            try{
+                outputHolder[0]=executeTask(taskExecutionId);
+            }
+            catch (InterruptedException e){
+                throw new RuntimeException(e);
+            }
+        });
+
+        Map<String,Object> output=outputHolder[0];
         output.put("prediction","BUY");
         System.out.println(Thread.currentThread().getName()+
                 " completed task "+taskExecutionId);
@@ -213,13 +225,20 @@ public class TaskRunnerService {
         while(attempts < maxRetries){
 
             try{
+                System.out.println("Before executeTask");
 
                 Map<String,Object> output=executeTask(taskExecutionId);
+                System.out.println("After executeTask");
+
                 TaskExecution taskExecution=taskExecutionRepository.findById(taskExecutionId).orElseThrow();
+                System.out.println("After loading TaskExecution");
+
 
                 Long workflowExecutionId=taskExecution.getWorkflowExecution().getId();
-                taskOutputService.storeOutput(workflowExecutionId,taskExecution.getTaskNode().getId(),output);
+                System.out.println("Before storeOutput");
 
+                taskOutputService.storeOutput(workflowExecutionId,taskExecution.getTaskNode().getId(),output);
+                System.out.println("After storeOutput");
 
                 return;
             }
