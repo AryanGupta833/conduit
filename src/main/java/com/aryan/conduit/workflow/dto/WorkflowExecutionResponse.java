@@ -5,6 +5,12 @@ import com.aryan.conduit.execution.entity.WorkflowExecutionStatus;
 import java.time.LocalDateTime;
 
 public record WorkflowExecutionResponse(
-        Long id, Long workflowId, WorkflowExecutionStatus status, LocalDateTime startedAt,LocalDateTime finishedAt
-        ) {
+        Long id,
+        Long workflowId,
+        Long workflowVersionId,
+        Integer versionNumber,
+        WorkflowExecutionStatus status,
+        LocalDateTime startedAt,
+        LocalDateTime finishedAt
+) {
 }

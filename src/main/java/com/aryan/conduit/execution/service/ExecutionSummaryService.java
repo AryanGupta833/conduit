@@ -35,7 +35,10 @@ public class ExecutionSummaryService
 
         return ExecutionSummaryResponse.builder()
                 .workflowExecutionId(workflowExecution.getId())
-                .workflowName(workflowExecution.getWorkflow().getName())
+                .workflowId(workflowExecution.getWorkflowVersion().getWorkflow().getId())
+                .workflowVersionId(workflowExecution.getWorkflowVersion().getId())
+                .versionNumber(workflowExecution.getVersionNumber())
+                .workflowName(workflowExecution.getWorkflowVersion().getWorkflow().getName())
                 .status(workflowExecution.getStatus().name())
                 .totalTasks(total)
                 .successfulTasks(success)

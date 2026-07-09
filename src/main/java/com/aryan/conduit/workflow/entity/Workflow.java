@@ -4,6 +4,7 @@ import jakarta.persistence.*;
 import lombok.*;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 @Entity
 @Table(name="workflows")
@@ -23,4 +24,8 @@ public class Workflow {
     private String cronExpression;
     private Boolean active;
     private LocalDateTime lastScheduledRun;
+    @OneToMany(mappedBy = "workflow",cascade = CascadeType.ALL)
+    private List<WorkflowVersion> versions;
+
+
 }

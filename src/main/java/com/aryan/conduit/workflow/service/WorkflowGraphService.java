@@ -26,10 +26,10 @@ public class WorkflowGraphService {
     private final DependencyRepository dependencyRepository;
     private final DagValidator dagValidator;
 
-    private Map<Long, List<Long> > buildGraph(Long workflowId){
-        List<TaskNode> tasks=taskNodeRepository.findByWorkflow_Id(workflowId);
+    private Map<Long, List<Long> > buildVersionGraph(Long workflowVersionId){
+        List<TaskNode> tasks=taskNodeRepository.findByWorkflowVersion_Id(workflowVersionId);
 
-        List<Dependency> dependencies=dependencyRepository.findByParent_Workflow_Id(workflowId);
+        List<Dependency> dependencies=dependencyRepository.findByParent_WorkflowVersion_Id(workflowVersionId);
 
         Map<Long,List<Long>> graph=new HashMap<>();
 
@@ -47,26 +47,26 @@ public class WorkflowGraphService {
 
     }
 
-    public void validateWorkflow(Long workflowId){
-        Map<Long,List<Long>> graph=buildGraph(workflowId);
+    public void validateWorkflow(Long versionId){
+        Map<Long,List<Long>> graph=buildVersionGraph(versionId);
 
         if(dagValidator.hashCycle(graph)){
             throw  new IllegalStateException("Workflow contains cycle");
         }
     }
 
-    public ExecutionPlan generateExecutionPlan(Long workflowId){
-        Map<Long,List<Long>> graph=buildGraph(workflowId);
+    public ExecutionPlan generateExecutionPlan(Long versionId){
+        Map<Long,List<Long>> graph=buildVersionGraph(versionId);
         if(dagValidator.hashCycle(graph)){
             throw new IllegalStateException("Workflow contains cycle");
         }
         List<Long> executionOrder=dagValidator.topologicalSort(graph);
-        return new ExecutionPlan(workflowId,executionOrder);
+        return new ExecutionPlan(versionId,executionOrder);
     }
 
-    public List<List<Long>> generateExecutionStages(Long workflowId)
+    public List<List<Long>> generateExecutionStages(Long versionId)
     {
-        Map<Long,List<Long>> graph=buildGraph(workflowId);
+        Map<Long,List<Long>> graph=buildVersionGraph(versionId);
 
         if(dagValidator.hashCycle(graph)){
             throw new IllegalStateException("Workflow contains cycle");
@@ -113,20 +113,22 @@ public class WorkflowGraphService {
         return stages;
      }
 
-     public WorkflowGraphResponse getWorkflowGraph(Long workflowId){
-        List<TaskNode> tasks=taskNodeRepository.findByWorkflow_Id(workflowId);
+     public WorkflowGraphResponse getWorkflowGraph(Long versionId){
+        List<TaskNode> tasks=taskNodeRepository.findByWorkflowVersion_Id(versionId);
 
-        List<Dependency> dependencies=dependencyRepository.findByParent_Workflow_Id(workflowId);
+        List<Dependency> dependencies=dependencyRepository.findByParent_WorkflowVersion_Id(versionId);
         List<GraphNodeResponse> nodes=tasks.stream().map(task->new GraphNodeResponse(task.getId(), task.getName())).toList();
         List<GraphEdgeResponse> edges=dependencies.stream().map(dependency -> new GraphEdgeResponse(dependency.getParent().getId(),dependency.getChild().getId())).toList();
 
         return new WorkflowGraphResponse(nodes,edges);
      }
 
-     public List<Long> getRootTasks(Long workflowId){
-        List<TaskNode> tasks=taskNodeRepository.findByWorkflow_Id(workflowId);
-        Set<Long> childTaskIds=dependencyRepository.findAll().stream().map(dependency -> dependency.getChild().getId()).collect(Collectors.toSet());
+     public List<Long> getRootTasks(Long versionId){
+        List<TaskNode> tasks=taskNodeRepository.findByWorkflowVersion_Id(versionId);
+        List<Dependency> dependencies=dependencyRepository.findByParent_WorkflowVersion_Id(versionId);
 
-        return tasks.stream().map(TaskNode::getId).filter(taskId->!childTaskIds.contains(taskId)).toList();
-     }
+        Set<Long> childTaskIds=dependencies.stream().map(d->d.getChild().getId()).collect(Collectors.toSet());
+        return tasks.stream().map(TaskNode::getId).filter(id->!childTaskIds.contains(id)).toList();
+
+    }
 }

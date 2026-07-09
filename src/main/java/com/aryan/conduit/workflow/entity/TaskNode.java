@@ -17,9 +17,9 @@ public class TaskNode {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
     private String name;
-    @ManyToOne
-    @JoinColumn
-    private Workflow workflow;
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "workflow_version_id")
+    private WorkflowVersion workflowVersion;
     private Integer timeoutSeconds;
     private Integer maxRetries;
     @Enumerated(EnumType.STRING)

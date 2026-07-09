@@ -10,4 +10,7 @@ public interface WorkflowExecutionRepository extends JpaRepository<WorkflowExecu
     List<WorkflowExecution> findAllByOrderByIdDesc();
     boolean existsByWorkflow_IdAndStatus(Long workflowId, WorkflowExecutionStatus status);
     List<WorkflowExecution> findByStatus(WorkflowExecutionStatus status);
+    boolean existsByWorkflowVersion_Workflow_IdAndStatus(Long workflowId,WorkflowExecutionStatus status);
+    List<WorkflowExecution> findByWorkflowVersion_IdOrderByIdDesc(Long workflowVersionId);
+    List<WorkflowExecution> findByWorkflowVersion_Workflow_IdOrderByIdDesc(Long workflowId);
 }

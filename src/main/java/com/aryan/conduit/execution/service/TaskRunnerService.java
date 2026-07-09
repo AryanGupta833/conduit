@@ -33,33 +33,36 @@ public class TaskRunnerService {
 
     private Map<String,Object> executeTask(Long taskExecutionId)
             throws InterruptedException {
-        executionLogService.log(taskExecutionId, LogLevel.INFO,"Task Started");
-        taskExecutionService.markRunning(taskExecutionId);
-        System.out.println(Thread.currentThread().getName()+
-                " executing task "+taskExecutionId);
-        Thread.sleep(15000);
-        if(true){
-            throw new RuntimeException("Forced Failure");
-        }
-        executionLogService.log(taskExecutionId,LogLevel.INFO,"Task Completed Successfully");
-        taskExecutionService.markSuccess(taskExecutionId);
         final Map<String,Object>[] outputHolder=new Map[1];
         circuitBreakerTaskService.executeTask(()->{
             try{
-                outputHolder[0]=executeTask(taskExecutionId);
+                outputHolder[0]=executeTaskInternal(taskExecutionId);
             }
             catch (InterruptedException e){
                 throw new RuntimeException(e);
             }
         });
-
-        Map<String,Object> output=outputHolder[0];
-        output.put("prediction","BUY");
-        System.out.println(Thread.currentThread().getName()+
-                " completed task "+taskExecutionId);
-        return output;
+        return outputHolder[0];
     }
 
+    private Map<String,Object> executeTaskInternal(Long taskExecutionId) throws InterruptedException{
+        executionLogService.log(taskExecutionId,LogLevel.INFO,"Task Started");
+        taskExecutionService.markRunning(taskExecutionId);
+
+        System.out.println(Thread.currentThread().getName()+" executing task "+taskExecutionId);
+        Thread.sleep(15000);
+
+//        if(true){
+//            throw new RuntimeException("Forced Failure");
+//        }
+        executionLogService.log(taskExecutionId,LogLevel.INFO,"Task Completed Successfully");
+        taskExecutionService.markSuccess(taskExecutionId);
+
+        Map<String,Object> output=new HashMap<>();
+        output.put("prediction","BUY");
+
+        return output;
+    }
     public void runExecution(
             WorkflowExecution workflowExecution,
             List<List<Long>> stages,

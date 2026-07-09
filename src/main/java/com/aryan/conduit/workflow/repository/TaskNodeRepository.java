@@ -6,5 +6,5 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import java.util.List;
 
 public interface TaskNodeRepository extends JpaRepository<TaskNode,Long> {
-    List<TaskNode> findByWorkflow_Id(Long workflowId);
+    List<TaskNode> findByWorkflowVersion_Id(Long versionId);
 }

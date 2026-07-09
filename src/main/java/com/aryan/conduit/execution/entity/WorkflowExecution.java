@@ -1,6 +1,7 @@
 package com.aryan.conduit.execution.entity;
 
 import com.aryan.conduit.workflow.entity.Workflow;
+import com.aryan.conduit.workflow.entity.WorkflowVersion;
 import jakarta.persistence.*;
 import lombok.*;
 
@@ -20,11 +21,13 @@ public class WorkflowExecution {
     private Long id;
 
     @ManyToOne
-    @JoinColumn
-    private Workflow workflow;
+    @JoinColumn(name = "workflow_version_id")
+    private WorkflowVersion workflowVersion;
 
     @Enumerated(EnumType.STRING)
     private WorkflowExecutionStatus status;
+
+    private Integer versionNumber;
 
     private LocalDateTime startedAt;
     private LocalDateTime finishedAt;

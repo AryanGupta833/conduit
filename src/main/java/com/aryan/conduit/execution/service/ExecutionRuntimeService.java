@@ -49,9 +49,9 @@ public class ExecutionRuntimeService {
 
     }
 
-    public RuntimeExecutionContext initializeContext(Long workflowId){
+    public RuntimeExecutionContext initializeContext(Long workflowVersionId){
         RuntimeExecutionContext context=new RuntimeExecutionContext();
-        List<Long> rootTasks=workflowGraphService.getRootTasks(workflowId);
+        List<Long> rootTasks=workflowGraphService.getRootTasks(workflowVersionId);
         for(Long rootTask:rootTasks){
             context.getReadyQueue().offer(rootTask);
             context.getScheduledTasks().add(rootTask);

@@ -32,9 +32,15 @@ public class ExecutionMonitoringService {
 
         return workflowExecutionRepository.findAllByOrderByIdDesc()
                 .stream().map(execution->
-                        new WorkflowExecutionResponse(execution.getId(),
-                                execution.getWorkflow().getId(),execution.getStatus()
-                        ,execution.getStartedAt(),execution.getFinishedAt())).toList();
+                        new WorkflowExecutionResponse(
+                                execution.getId(),
+                                execution.getWorkflowVersion().getWorkflow().getId(),
+                                execution.getWorkflowVersion().getId(),
+                                execution.getVersionNumber(),
+                                execution.getStatus(),
+                                execution.getStartedAt(),
+                                execution.getFinishedAt()
+                        )).toList();
     }
 
     public WorkflowExecutionDetailResponse getExecution(
@@ -49,7 +55,7 @@ public class ExecutionMonitoringService {
 
         return new WorkflowExecutionDetailResponse(
                 execution.getId(),
-                execution.getWorkflow().getName(),
+                execution.getWorkflowVersion().getWorkflow().getName(),
                 execution.getStatus(),
                 execution.getStartedAt(),
                 execution.getFinishedAt()

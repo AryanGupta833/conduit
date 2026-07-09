@@ -5,6 +5,8 @@ import com.aryan.conduit.workflow.dto.CreateWorkflowRequest;
 import com.aryan.conduit.workflow.dto.ExecutionPlan;
 import com.aryan.conduit.workflow.dto.WorkflowGraphResponse;
 import com.aryan.conduit.workflow.entity.Workflow;
+import com.aryan.conduit.workflow.entity.WorkflowVersion;
+import com.aryan.conduit.workflow.repository.WorkflowVersionRepository;
 import com.aryan.conduit.workflow.service.WorkflowGraphService;
 import com.aryan.conduit.workflow.service.WorkflowService;
 import lombok.RequiredArgsConstructor;
@@ -19,6 +21,7 @@ public class WorkflowController {
     private final WorkflowGraphService workflowGraphService;
     private final ExecutionService executionService;
     private final WorkflowService workflowService;
+    private final WorkflowVersionRepository workflowVersionRepository;
 
     @PostMapping
     public Workflow createWorkflow(@RequestBody CreateWorkflowRequest request){
@@ -27,7 +30,8 @@ public class WorkflowController {
 
     @GetMapping("/{id}/plan")
     public ExecutionPlan getPlan(@PathVariable Long id){
-        return workflowGraphService.generateExecutionPlan(id);
+        WorkflowVersion version=workflowVersionRepository.findByWorkflow_IdAndLatestTrue(id).orElseThrow(()->new IllegalStateException("No published version found"));
+        return workflowGraphService.generateExecutionPlan(version.getId());
     }
     @PostMapping("/{id}/execute")
     public Long executeWorkflow(@PathVariable Long id){
@@ -35,10 +39,13 @@ public class WorkflowController {
     }
     @GetMapping("/{id}/stages")
     public List<List<Long>> getStages(@PathVariable Long id){
-        return workflowGraphService.generateExecutionStages(id);
+        WorkflowVersion version=workflowVersionRepository.findByWorkflow_IdAndLatestTrue(id).orElseThrow(()->new IllegalStateException("No published version found"));
+
+        return workflowGraphService.generateExecutionStages(version.getId());
     }
     @GetMapping("/{id}/graph")
     public WorkflowGraphResponse getGraph(@PathVariable Long id){
-        return workflowGraphService.getWorkflowGraph(id);
+        WorkflowVersion version=workflowVersionRepository.findByWorkflow_IdAndLatestTrue(id).orElseThrow(()->new IllegalStateException("No published version found"));
+        return workflowGraphService.getWorkflowGraph(version.getId());
     }
 }

@@ -3,8 +3,11 @@ package com.aryan.conduit.workflow.controller;
 import com.aryan.conduit.execution.entity.TaskExecutionStatus;
 import com.aryan.conduit.execution.service.ExecutionCreationService;
 import com.aryan.conduit.execution.service.ExecutionRuntimeService;
+import com.aryan.conduit.execution.service.ExecutionService;
 import com.aryan.conduit.workflow.dto.ExecutionContext;
 import com.aryan.conduit.workflow.dto.RuntimeExecutionContext;
+import com.aryan.conduit.workflow.entity.WorkflowVersion;
+import com.aryan.conduit.workflow.repository.WorkflowVersionRepository;
 import com.aryan.conduit.workflow.service.RuntimeWorkflowExecutor;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -22,7 +25,9 @@ import java.util.Objects;
 public class RuntimeController {
     private final ExecutionRuntimeService executionRuntimeService;
     private final RuntimeWorkflowExecutor runtimeWorkflowExecutor;
+    private final ExecutionService executionService;
     private final ExecutionCreationService executionCreationService;
+    private final WorkflowVersionRepository workflowVersionRepository;
 
     @GetMapping("/test")
     public Boolean test(){
@@ -33,21 +38,26 @@ public class RuntimeController {
 
     @GetMapping("/queue/{workflowId}")
     public Object queue(@PathVariable Long workflowId){
-        RuntimeExecutionContext context= executionRuntimeService.initializeContext(workflowId);
+        WorkflowVersion version=workflowVersionRepository.findByWorkflow_IdAndLatestTrue(workflowId).orElseThrow(()->new IllegalStateException("No published version found"));
+        RuntimeExecutionContext context= executionRuntimeService.initializeContext(version.getId());
         return context.getReadyQueue();
     }
 
     @GetMapping("/simulate/{workflowId}")
     public String simulate(@PathVariable Long workflowId){
-        runtimeWorkflowExecutor.simulate(workflowId);
+        WorkflowVersion version=workflowVersionRepository.findByWorkflow_IdAndLatestTrue(workflowId).orElseThrow(()->new IllegalStateException("No published version found"));
+        runtimeWorkflowExecutor.simulate(version.getId());
         return "Simulation complete";
     }
 
     @GetMapping("/execute/{workflowId}")
     public String execute(@PathVariable Long workflowId){
-        ExecutionContext context=executionCreationService.createExecution(workflowId);
-        runtimeWorkflowExecutor.execute(context.workflowExecution().getId(),workflowId);
-
-        return "Done";
+        try{
+            Long executionId=executionService.startWorkflow(workflowId);
+            return "Workflow Started,Id= "+executionId;
+        }
+        catch (IllegalStateException e){
+            return e.getMessage();
+        }
     }
 }

@@ -28,22 +28,28 @@ public class WorkflowSchedularService {
         LocalDateTime now=LocalDateTime.now();
 
         for(Workflow workflow:workflows){
+
+            if(workflow.getCronExpression()==null||workflow.getCronExpression().isBlank()){
+                continue;
+            }
+
             CronExpression cron= CronExpression.parse(workflow.getCronExpression());
             LocalDateTime baseTime=workflow.getLastScheduledRun()==null?workflow.getCreatedAt():workflow.getLastScheduledRun();
 
             LocalDateTime nextRun=cron.next(baseTime);
             if(nextRun!=null&&!nextRun.isAfter(now)){
-                boolean running= workflowExecutionRepository.existsByWorkflow_IdAndStatus(workflow.getId(), WorkflowExecutionStatus.RUNNING);
 
-                System.out.println("Workflow "+workflow.getId()+" running "+running);
-
-                if(running){
-                    System.out.println("Workflow "+workflow.getId()+" already running Skipping");
-                    continue;
+                try{
+                    executionService.startWorkflow(workflow.getId());
+                    workflow.setLastScheduledRun(nextRun);
+                    workflowRepository.save(workflow);
                 }
-                executionService.startWorkflowAsync(workflow.getId());
-                workflow.setLastScheduledRun(nextRun);
-                workflowRepository.save(workflow);
+                catch (IllegalStateException ex){
+                    System.out.println(ex.getMessage());
+                }
+                catch (Exception ex){
+                    System.out.println("Failed to schedule workflow "+workflow.getId()+": "+ex.getMessage());
+                }
             }
 
         }
