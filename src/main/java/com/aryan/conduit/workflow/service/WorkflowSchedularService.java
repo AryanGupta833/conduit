@@ -40,9 +40,10 @@ public class WorkflowSchedularService {
             if(nextRun!=null&&!nextRun.isAfter(now)){
 
                 try{
-                    executionService.startWorkflow(workflow.getId());
+
                     workflow.setLastScheduledRun(nextRun);
                     workflowRepository.save(workflow);
+                    executionService.startWorkflow(workflow.getId());
                 }
                 catch (IllegalStateException ex){
                     System.out.println(ex.getMessage());

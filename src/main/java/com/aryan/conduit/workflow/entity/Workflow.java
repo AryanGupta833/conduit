@@ -1,5 +1,6 @@
 package com.aryan.conduit.workflow.entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 import lombok.*;
 
@@ -25,6 +26,7 @@ public class Workflow {
     private Boolean active;
     private LocalDateTime lastScheduledRun;
     @OneToMany(mappedBy = "workflow",cascade = CascadeType.ALL)
+    @JsonIgnore
     private List<WorkflowVersion> versions;
 
 

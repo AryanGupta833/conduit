@@ -25,6 +25,17 @@ public class TaskNode {
     @Enumerated(EnumType.STRING)
     @Builder.Default
     private JoinCondition joinCondition=JoinCondition.ALL_PARENTS;
+    private String pluginType;
+
+    @Column(columnDefinition = "TEXT")
+    private String configurationJson;
+
+    @Column(name = "x_position")
+    private Double xPosition;
+
+    @Column(name="y_position")
+    private Double yPosition;
+    private String displayName;
 
 
 

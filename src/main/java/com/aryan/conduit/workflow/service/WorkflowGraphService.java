@@ -117,8 +117,30 @@ public class WorkflowGraphService {
         List<TaskNode> tasks=taskNodeRepository.findByWorkflowVersion_Id(versionId);
 
         List<Dependency> dependencies=dependencyRepository.findByParent_WorkflowVersion_Id(versionId);
-        List<GraphNodeResponse> nodes=tasks.stream().map(task->new GraphNodeResponse(task.getId(), task.getName())).toList();
-        List<GraphEdgeResponse> edges=dependencies.stream().map(dependency -> new GraphEdgeResponse(dependency.getParent().getId(),dependency.getChild().getId())).toList();
+         List<GraphNodeResponse> nodes = tasks.stream()
+                 .map(task -> new GraphNodeResponse(
+                         task.getId(),
+                         task.getName(),
+                         task.getXPosition(),
+                         task.getYPosition(),
+                         task.getPluginType(),
+                         task.getTimeoutSeconds(),
+                         task.getMaxRetries(),
+                         task.getJoinCondition(),
+                         task.getConfigurationJson()
+                 ))
+                 .toList();
+         List<GraphEdgeResponse> edges =
+                 dependencies.stream()
+                         .map(dependency ->
+                                 new GraphEdgeResponse(
+                                         dependency.getId(),
+                                         dependency.getParent().getId(),
+                                         dependency.getChild().getId(),
+                                         dependency.getCondition(),
+                                         dependency.getExpression()
+                                 ))
+                         .toList();
 
         return new WorkflowGraphResponse(nodes,edges);
      }

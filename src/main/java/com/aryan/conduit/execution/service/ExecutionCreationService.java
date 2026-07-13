@@ -36,77 +36,40 @@ public class ExecutionCreationService {
 
     @Transactional
     public ExecutionContext createExecution(Long workflowId){
+        WorkflowVersion version=workflowVersionRepository.findByWorkflow_IdAndLatestTrue(workflowId)
+                .orElseThrow(()->new IllegalStateException("No published version found"));
+        return createExecutionForVersion(version.getId());
+    }
 
-        WorkflowVersion version=workflowVersionRepository.findByWorkflow_IdAndLatestTrue(workflowId).orElseThrow(()->new IllegalStateException("No published version"));
-
-        List<List<Long>> stages =
-                workflowGraphService.generateExecutionStages(version.getId());
+    @Transactional
+    public ExecutionContext createExecutionForVersion(Long workflowVersionId){
+        WorkflowVersion version=workflowVersionRepository.findById(workflowVersionId).orElseThrow(()->new RuntimeException("Workflow version not found"));
+        List<List<Long>> stages=workflowGraphService.generateExecutionStages(workflowVersionId);
 
         if(stages.isEmpty()){
-            throw new IllegalStateException("Workflow "+workflowId+" has no task nodes.");
+            throw new IllegalStateException("Workflow version has no task nodes");
         }
+        WorkflowExecution workflowExecution=WorkflowExecution.builder()
+                .workflowVersion(version).versionNumber(version.getVersionNumber()).status(WorkflowExecutionStatus.RUNNING)
+                .startedAt(LocalDateTime.now()).build();
 
-        System.out.println("Workflow " + workflowId);
-        System.out.println("Stages = " + stages);
-        System.out.println("Stage count = " + stages.size());
-
-        WorkflowExecution workflowExecution =
-                WorkflowExecution.builder()
-                        .workflowVersion(version)
-                        .status(WorkflowExecutionStatus.RUNNING)
-                        .startedAt(LocalDateTime.now())
-                        .build();
-
-        workflowExecution =
-                workflowExecutionRepository.save(workflowExecution);
-
-        ExecutionContextEntity executionContext=ExecutionContextEntity.builder()
-                .workflowExecution(workflowExecution)
-                .variableJson("{}")
-                .build();
+        workflowExecution=workflowExecutionRepository.save(workflowExecution);
+        com.aryan.conduit.execution.entity.ExecutionContextEntity executionContext = ExecutionContextEntity
+                .builder().workflowExecution(workflowExecution).variableJson("{}").build();
 
         executionContextRepository.save(executionContext);
 
-        Map<Long, TaskExecution> taskExecutionMap =
-                new HashMap<>();
-        System.out.println("Creating TaskExecution rows...");
-        for(List<Long> stage : stages){
+        Map<Long,TaskExecution> taskExecutionMap=new HashMap<>();
 
-            for(Long taskId : stage){
-                System.out.println("Creating task " + taskId);
-                TaskNode taskNode =
-                        taskNodeRepository.findById(taskId)
-                                .orElseThrow(() ->
-                                        new RuntimeException("Task not found"));
+        for(List<Long> stage:stages){
+            for(Long taskId:stage){
+                TaskNode taskNode=taskNodeRepository.findById(taskId).orElseThrow(()->new RuntimeException("Task not found"));
+                TaskExecution taskExecution=TaskExecution.builder().workflowExecution(workflowExecution).taskNode(taskNode).status(TaskExecutionStatus.PENDING).retryCount(0).build();
 
-                TaskExecution taskExecution =
-                        TaskExecution.builder()
-                                .workflowExecution(workflowExecution)
-                                .taskNode(taskNode)
-                                .status(TaskExecutionStatus.PENDING)
-                                .retryCount(0)
-                                .build();
-
-                TaskExecution saved =
-                        taskExecutionRepository.save(taskExecution);
-
-                taskExecutionMap.put(
-                        taskNode.getId(),
-                        saved
-                );
+                taskExecution=taskExecutionRepository.save(taskExecution);
+                taskExecutionMap.put(taskId,taskExecution);
             }
         }
-        System.out.println("Created workflow execution " + workflowExecution.getId());
-
-        long count = taskExecutionRepository
-                .findByWorkflowExecution_Id(workflowExecution.getId())
-                .size();
-
-        System.out.println("Task executions created = " + count);
-        return new ExecutionContext(
-                workflowExecution,
-                stages,
-                taskExecutionMap
-        );
+        return new ExecutionContext(workflowExecution,stages,taskExecutionMap);
     }
 }

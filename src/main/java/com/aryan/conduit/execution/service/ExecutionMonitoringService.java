@@ -89,9 +89,11 @@ public class ExecutionMonitoringService {
                 .stream()
                 .map(log ->
                         new ExecutionLogResponse(
-                                log.getTimestamp(),
-                                log.getLevel().name(),
-                                log.getMessage()
+                                log.getId(),
+                                log.getLevel(),
+                                log.getMessage(),
+                                log.getTimestamp()
+
                         )
                 )
                 .toList();

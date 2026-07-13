@@ -8,7 +8,6 @@ import java.util.List;
 
 public interface WorkflowExecutionRepository extends JpaRepository<WorkflowExecution,Long> {
     List<WorkflowExecution> findAllByOrderByIdDesc();
-    boolean existsByWorkflow_IdAndStatus(Long workflowId, WorkflowExecutionStatus status);
     List<WorkflowExecution> findByStatus(WorkflowExecutionStatus status);
     boolean existsByWorkflowVersion_Workflow_IdAndStatus(Long workflowId,WorkflowExecutionStatus status);
     List<WorkflowExecution> findByWorkflowVersion_IdOrderByIdDesc(Long workflowVersionId);

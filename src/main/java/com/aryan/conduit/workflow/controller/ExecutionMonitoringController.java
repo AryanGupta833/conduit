@@ -27,10 +27,10 @@ public class ExecutionMonitoringController {
         return executionMonitoringService.getExecutions();
     }
 
-    @GetMapping("/{id}")
-    public WorkflowExecutionDetailResponse getExecution(@PathVariable Long id){
-        return executionMonitoringService.getExecution(id);
-    }
+//    @GetMapping("/{id}")
+//    public WorkflowExecutionDetailResponse getExecution(@PathVariable Long id){
+//        return executionMonitoringService.getExecution(id);
+//    }
 
     @GetMapping("/{id}/tasks")
     public List<TaskExecutionResponse> getTasks(@PathVariable Long id){

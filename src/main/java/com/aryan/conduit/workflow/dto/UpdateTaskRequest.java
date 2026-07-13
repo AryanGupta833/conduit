@@ -1,7 +1,8 @@
 package com.aryan.conduit.workflow.dto;
 
-public record CreateTaskRequest(
-        Long workflowId,
+import com.aryan.conduit.execution.entity.JoinCondition;
+
+public record UpdateTaskRequest(
 
         String name,
 
@@ -12,7 +13,10 @@ public record CreateTaskRequest(
         String pluginType,
 
         String configurationJson,
+
+        JoinCondition joinCondition,
         Double xPosition,
         Double yPosition
+
 ) {
 }

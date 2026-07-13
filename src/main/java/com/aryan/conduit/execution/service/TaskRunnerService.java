@@ -3,6 +3,7 @@ package com.aryan.conduit.execution.service;
 import com.aryan.conduit.execution.entity.*;
 import com.aryan.conduit.execution.repository.TaskExecutionRepository;
 import com.aryan.conduit.execution.repository.WorkflowExecutionRepository;
+import com.aryan.conduit.plugin.PluginManager;
 import com.aryan.conduit.workflow.dto.TaskFuture;
 import jakarta.persistence.criteria.CriteriaBuilder;
 import jakarta.transaction.Transactional;
@@ -28,6 +29,7 @@ public class TaskRunnerService {
     private final ExecutionLogService executionLogService;
     private final TaskOutputService taskOutputService;
     private final CircuitBreakerTaskService circuitBreakerTaskService;
+    private final PluginManager pluginManager;
 
 
 

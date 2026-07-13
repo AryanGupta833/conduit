@@ -22,6 +22,11 @@ public class ExecutionLogController {
     public List<ExecutionLogResponse> getLogs(@PathVariable Long workflowExecutionId){
         return executionLogRepository.findByTaskExecution_WorkflowExecution_Id(workflowExecutionId)
                 .stream()
-                .map(log->new ExecutionLogResponse(log.getTimestamp(),log.getLevel().name(), log.getMessage())).toList();
+                .map(log->new ExecutionLogResponse(
+                        log.getId(),
+                        log.getLevel(),
+                        log.getMessage(),
+                        log.getTimestamp()
+                )).toList();
     }
 }
