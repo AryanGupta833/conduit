@@ -30,4 +30,7 @@ public class TaskExecution {
     private TaskExecutionStatus status;
 
     private Integer retryCount;
+
+    @Column(name = "idempotency_key", unique = true, nullable = false)
+    private String idempotencyKey;
 }

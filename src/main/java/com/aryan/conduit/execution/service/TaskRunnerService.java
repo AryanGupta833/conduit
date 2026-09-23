@@ -17,6 +17,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.*;
+import com.aryan.conduit.plugin.PluginResult;
+import com.aryan.conduit.plugin.WorkflowPlugin;
 
 @Service
 @RequiredArgsConstructor
@@ -30,6 +32,7 @@ public class TaskRunnerService {
     private final CircuitBreakerTaskService circuitBreakerTaskService;
     private final PluginManager pluginManager;
     private final RetryPolicyFactory retryPolicyFactory;
+    private final IdempotencyService idempotencyService;
 
 
     private Map<String, Object> executeTask(Long taskExecutionId)
@@ -50,35 +53,173 @@ public class TaskRunnerService {
                 "Task Started"
         );
 
-        taskExecutionService.markRunning(taskExecutionId);
+        TaskExecution taskExecution =
+                taskExecutionRepository.findById(taskExecutionId)
+                        .orElseThrow(() ->
+                                new IllegalStateException(
+                                        "Task execution not found: "
+                                                + taskExecutionId
+                                ));
 
-        System.out.println(
-                Thread.currentThread().getName()
-                        + " executing task "
-                        + taskExecutionId
-        );
+        String idempotencyKey =
+                taskExecution.getIdempotencyKey();
 
         /*
-         * Temporary test workload.
-         *
-         * Change this later when actual plugins
-         * are executed here.
+         * Check whether this logical task has already
+         * completed successfully.
          */
-        Thread.sleep(15000);
+        var completedResult =
+                idempotencyService.getCompletedResult(idempotencyKey);
 
-        executionLogService.log(
-                taskExecutionId,
-                LogLevel.INFO,
-                "Task Completed Successfully"
-        );
+        if (completedResult.isPresent()) {
 
-        taskExecutionService.markSuccess(taskExecutionId);
+            executionLogService.log(
+                    taskExecutionId,
+                    LogLevel.INFO,
+                    "Returning previously completed idempotent result"
+            );
 
-        Map<String, Object> output = new HashMap<>();
+            return pluginResultToMap(completedResult.get());
+        }
 
-        output.put("prediction", "BUY");
+        /*
+         * Try to acquire ownership of this logical task.
+         *
+         * The UNIQUE constraint on idempotency_key ensures
+         * that only one worker can acquire it.
+         */
+        boolean acquired =
+                idempotencyService.tryStart(idempotencyKey);
 
-        return output;
+        if (!acquired) {
+
+            /*
+             * Another worker may have completed the task
+             * between our first check and tryStart().
+             */
+            completedResult =
+                    idempotencyService.getCompletedResult(idempotencyKey);
+
+            if (completedResult.isPresent()) {
+
+                executionLogService.log(
+                        taskExecutionId,
+                        LogLevel.INFO,
+                        "Another execution completed this task; "
+                                + "using stored idempotent result"
+                );
+
+                return pluginResultToMap(completedResult.get());
+            }
+
+            /*
+             * The task is currently being executed by
+             * another worker.
+             */
+            throw new IllegalStateException(
+                    "Task is already being executed: "
+                            + idempotencyKey
+            );
+        }
+
+        /*
+         * Idempotency ownership was successfully acquired.
+         * Only now should the TaskExecution become RUNNING.
+         */
+        taskExecutionService.markRunning(taskExecutionId);
+
+        try {
+
+            String pluginType =
+                    taskExecution.getTaskNode().getPluginType();
+
+            WorkflowPlugin plugin =
+                    pluginManager.getPlugin(pluginType);
+
+            executionLogService.log(
+                    taskExecutionId,
+                    LogLevel.INFO,
+                    "Executing plugin: " + pluginType
+            );
+
+            /*
+             * Variables will later come from the workflow
+             * execution context / expression engine.
+             */
+            Map<String, Object> variables =
+                    new HashMap<>();
+
+            PluginResult result =
+                    plugin.execute(
+                            taskExecution.getTaskNode(),
+                            variables
+                    );
+
+            /*
+             * Plugin itself reported failure.
+             */
+            if (!result.isSuccess()) {
+
+                executionLogService.log(
+                        taskExecutionId,
+                        LogLevel.ERROR,
+                        "Plugin execution failed: "
+                                + result.getOutput()
+                );
+
+                /*
+                 * Release the idempotency lock so that
+                 * the retry mechanism can execute the task again.
+                 */
+                idempotencyService.release(idempotencyKey);
+
+                throw new RuntimeException(
+                        result.getOutput()
+                );
+            }
+
+            /*
+             * Plugin completed successfully.
+             *
+             * Store the result before marking the task
+             * as successfully completed.
+             */
+            idempotencyService.complete(
+                    idempotencyKey,
+                    result
+            );
+
+            executionLogService.log(
+                    taskExecutionId,
+                    LogLevel.INFO,
+                    "Task Completed Successfully"
+            );
+
+            taskExecutionService.markSuccess(taskExecutionId);
+
+            return pluginResultToMap(result);
+
+        }
+
+         catch (Exception e) {
+
+            /*
+             * Plugin threw an exception.
+             *
+             * Release the idempotency ownership so the
+             * existing retry mechanism can attempt it again.
+             */
+            idempotencyService.release(idempotencyKey);
+
+            executionLogService.log(
+                    taskExecutionId,
+                    LogLevel.ERROR,
+                    "Plugin execution failed: "
+                            + e.getMessage()
+            );
+
+            throw e;
+        }
     }
 
 
@@ -521,5 +662,23 @@ public class TaskRunnerService {
                 );
             }
         }
+    }
+    private Map<String, Object> pluginResultToMap(
+            PluginResult result) {
+
+        Map<String, Object> output = new HashMap<>();
+
+        output.put("success", result.isSuccess());
+        output.put("output", result.getOutput());
+
+        if (result.getVariables() != null) {
+            output.put("variables", result.getVariables());
+        }
+
+        if (result.getMetadata() != null) {
+            output.put("metadata", result.getMetadata());
+        }
+
+        return output;
     }
 }

@@ -64,8 +64,13 @@ public class ExecutionCreationService {
         for(List<Long> stage:stages){
             for(Long taskId:stage){
                 TaskNode taskNode=taskNodeRepository.findById(taskId).orElseThrow(()->new RuntimeException("Task not found"));
-                TaskExecution taskExecution=TaskExecution.builder().workflowExecution(workflowExecution).taskNode(taskNode).status(TaskExecutionStatus.PENDING).retryCount(0).build();
-
+                TaskExecution taskExecution = TaskExecution.builder()
+                        .workflowExecution(workflowExecution)
+                        .taskNode(taskNode)
+                        .idempotencyKey(workflowExecution.getId() + ":" + taskNode.getId())
+                        .status(TaskExecutionStatus.PENDING)
+                        .retryCount(0)
+                        .build();
                 taskExecution=taskExecutionRepository.save(taskExecution);
                 taskExecutionMap.put(taskId,taskExecution);
             }

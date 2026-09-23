@@ -1,18 +1,13 @@
 package com.aryan.conduit.workflow.controller;
 
-import com.aryan.conduit.execution.service.ExecutionGraphService;
-import com.aryan.conduit.execution.service.ExecutionLogStreamService;
-import com.aryan.conduit.execution.service.ExecutionService;
-import com.aryan.conduit.execution.service.ExecutionSummaryService;
+import com.aryan.conduit.execution.service.*;
 import com.aryan.conduit.workflow.dto.ExecutionGraphResponse;
 import com.aryan.conduit.workflow.dto.ExecutionResponse;
 import com.aryan.conduit.workflow.dto.ExecutionStatusResponse;
 import com.aryan.conduit.workflow.dto.ExecutionSummaryResponse;
 import lombok.RequiredArgsConstructor;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 
@@ -24,6 +19,7 @@ public class ExecutionController {
     private final ExecutionService executionService;
     private final ExecutionGraphService executionGraphService;
     private final ExecutionLogStreamService executionLogStreamService;
+    private final TaskRunnerService taskRunnerService;
 
     @GetMapping("/{executionId}/summary")
     public ExecutionSummaryResponse summary(@PathVariable Long executionId) {
@@ -49,6 +45,20 @@ public class ExecutionController {
         return executionLogStreamService.subscribe(executionId);
     }
 
+    @PostMapping("/test/idempotency/{taskExecutionId}")
+    public ResponseEntity<String> testIdempotency(
+            @PathVariable Long taskExecutionId) throws InterruptedException {
+
+        taskRunnerService.executeWithRetry(
+                taskExecutionId,
+                2,
+                10
+        );
+
+        return ResponseEntity.ok(
+                "Task execution completed: " + taskExecutionId
+        );
+    }
 
 }
 
