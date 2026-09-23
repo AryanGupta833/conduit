@@ -9,6 +9,7 @@ import com.aryan.conduit.workflow.entity.Workflow;
 import com.aryan.conduit.workflow.repository.WorkflowRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.scheduling.support.CronExpression;
 import org.springframework.stereotype.Service;
 
@@ -21,9 +22,16 @@ public class WorkflowSchedularService {
     private final WorkflowRepository workflowRepository;
     private final ExecutionService  executionService;
     private final WorkflowExecutionRepository workflowExecutionRepository;
+    private final ThreadPoolTaskExecutor workflowExecutor;
 
-    @Scheduled(fixedRate = 10000)
+    //@Scheduled(fixedRate = 10000)
     public void checkWorkflows(){
+        System.out.println(
+                "Workflow executor: active=" + workflowExecutor.getActiveCount()
+                        + ", pool=" + workflowExecutor.getPoolSize()
+                        + ", queue=" + workflowExecutor.getQueueSize()
+        );
+
         List<Workflow> workflows=workflowRepository.findByActiveTrue();
         LocalDateTime now=LocalDateTime.now();
 
