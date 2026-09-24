@@ -14,10 +14,10 @@ public class RetryPolicyFactory {
 
         return RetryPolicy.builder()
                 .maxRetries(retries)
-                .backoffStrategy(RetryBackoffStrategy.FIXED)
+                .backoffStrategy(RetryBackoffStrategy.EXPONENTIAL)
                 .initialDelayMs(1000)
                 .maxDelayMs(10000)
-                .jitter(false)
+                .jitter(true)
                 .build();
     }
 }

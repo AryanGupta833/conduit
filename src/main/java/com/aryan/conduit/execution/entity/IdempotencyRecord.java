@@ -39,4 +39,6 @@ public class IdempotencyRecord {
     private LocalDateTime createdAt;
 
     private LocalDateTime completedAt;
+
+    private LocalDateTime leaseUntil;
 }

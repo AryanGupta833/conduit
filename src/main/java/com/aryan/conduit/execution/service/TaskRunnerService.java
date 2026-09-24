@@ -71,6 +71,7 @@ public class TaskRunnerService {
         var completedResult =
                 idempotencyService.getCompletedResult(idempotencyKey);
 
+
         if (completedResult.isPresent()) {
 
             executionLogService.log(

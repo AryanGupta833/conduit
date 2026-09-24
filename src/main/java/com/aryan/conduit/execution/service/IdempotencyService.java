@@ -21,6 +21,7 @@ public class IdempotencyService {
     private final IdempotencyRecordRepository repository;
     private final ObjectMapper objectMapper;
 
+
     @Transactional
     public boolean tryStart(String idempotencyKey) {
 
@@ -32,55 +33,52 @@ public class IdempotencyService {
             IdempotencyRecord record = existing.get();
 
             /*
-             * A completed operation must never execute again.
+             * Completed operations must never execute again.
              */
             if (record.getStatus() == IdempotencyStatus.COMPLETED) {
                 return false;
             }
 
             /*
-             * Another worker currently owns this execution.
+             * Existing execution.
              */
             if (record.getStatus() == IdempotencyStatus.IN_PROGRESS) {
-                return false;
+
+                /*
+                 * Valid lease → another worker owns it.
+                 */
+                if (record.getLeaseUntil() != null
+                        && record.getLeaseUntil()
+                        .isAfter(LocalDateTime.now())) {
+
+                    return false;
+                }
+
+                /*
+                 * Expired lease → attempt atomic reclamation.
+                 */
+                return repository.reclaimExpiredLease(
+                        idempotencyKey
+                ) == 1;
             }
 
             /*
-             * FAILED means a previous attempt failed.
-             * The retry mechanism is allowed to acquire it again.
+             * Previous execution failed.
+             * Atomically reacquire with a fresh lease.
              */
             if (record.getStatus() == IdempotencyStatus.FAILED) {
 
-                record.setStatus(IdempotencyStatus.IN_PROGRESS);
-                record.setResultJson(null);
-                record.setCompletedAt(null);
-
-                repository.saveAndFlush(record);
-
-                return true;
+                return repository.reacquireFailed(
+                        idempotencyKey
+                ) == 1;
             }
         }
 
-        try {
-
-            IdempotencyRecord record =
-                    IdempotencyRecord.builder()
-                            .idempotencyKey(idempotencyKey)
-                            .status(IdempotencyStatus.IN_PROGRESS)
-                            .createdAt(LocalDateTime.now())
-                            .build();
-
-            repository.saveAndFlush(record);
-
-            return true;
-
-        } catch (DataIntegrityViolationException e) {
-
-            /*
-             * Another worker inserted the same key concurrently.
-             */
-            return false;
-        }
+        /*
+         * No record exists.
+         * Atomically create one with a 60-second lease.
+         */
+        return repository.insertIfAbsent(idempotencyKey) == 1;
     }
 
     @Transactional(readOnly = true)
