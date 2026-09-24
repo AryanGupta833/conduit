@@ -18,8 +18,8 @@ import java.util.Map;
 public class ExecutionRuntimeService {
     private final DependencyRepository dependencyRepository;
     private final WorkflowGraphService workflowGraphService;
-    private final ExecutionContextService executionContextService;
     private final ExpressionEvaluator expressionEvaluator;
+    private final ExpressionContextService expressionContextService;
 
 
 
@@ -60,29 +60,106 @@ public class ExecutionRuntimeService {
         return context;
     }
 
-    public void evaluateChildren(Long workflowExecutionId,Long completedTaskId,RuntimeExecutionContext context){
-        System.out.println("Evaluating children for task "+completedTaskId);
-        List<Dependency> dependencies=dependencyRepository.findByParent_Id(completedTaskId);
-        for(Dependency dependency:dependencies){
-            Long childId=dependency.getChild().getId();
-            System.out.println("Dependency condition = "+dependency.getCondition());
-            System.out.println("Expression = "+dependency.getExpression());
-            System.out.println("Checking child "+childId);
-            System.out.println("Calling canRun for child "+childId);
-            boolean runnable=canRun(workflowExecutionId,childId,context.getTaskStatuses());
+    public void evaluateChildren(
+            Long workflowExecutionId,
+            Long completedTaskId,
+            RuntimeExecutionContext context
+    ) {
 
-            if(runnable&&!context.getScheduledTasks().contains(childId)){
+        List<Dependency> dependencies =
+                dependencyRepository.findByParent_Id(
+                        completedTaskId
+                );
+
+        for (Dependency dependency : dependencies) {
+
+            Long childId =
+                    dependency.getChild().getId();
+
+            if (context.getScheduledTasks().contains(childId)) {
+                continue;
+            }
+
+            boolean runnable =
+                    canRun(
+                            workflowExecutionId,
+                            childId,
+                            context.getTaskStatuses()
+                    );
+
+            if (runnable) {
+
                 context.getReadyQueue().offer(childId);
                 context.getScheduledTasks().add(childId);
-                System.out.println("Scheduled child "+childId);
 
-            }
-            else if(runnable){
-                System.out.println("Child "+childId+" already scheduled");
+                continue;
             }
 
-            System.out.println("canRun result = "+runnable);
+            /*
+             * Do not skip the child yet if another parent
+             * could still satisfy its dependency.
+             */
+            if (allParentsTerminal(
+                    childId,
+                    context.getTaskStatuses()
+            )) {
+
+                context.getTaskStatuses().put(
+                        childId,
+                        TaskExecutionStatus.SKIPPED
+                );
+
+                context.getScheduledTasks().add(childId);
+
+                /*
+                 * A skipped task is still a completed runtime
+                 * event, so evaluate its children as well.
+                 */
+                evaluateChildren(
+                        workflowExecutionId,
+                        childId,
+                        context
+                );
+            }
         }
+    }
+    private boolean allParentsTerminal(
+            Long childId,
+            Map<Long, TaskExecutionStatus> taskStatuses
+    ) {
+
+        List<Dependency> dependencies =
+                dependencyRepository.findByChild_Id(
+                        childId
+                );
+
+        if (dependencies.isEmpty()) {
+            return true;
+        }
+
+        for (Dependency dependency : dependencies) {
+
+            Long parentId =
+                    dependency.getParent().getId();
+
+            TaskExecutionStatus status =
+                    taskStatuses.get(parentId);
+
+            if (status == null || !isTerminal(status)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+    private boolean isTerminal(
+            TaskExecutionStatus status
+    ) {
+
+        return status == TaskExecutionStatus.SUCCESS
+                || status == TaskExecutionStatus.FAILED
+                || status == TaskExecutionStatus.SKIPPED
+                || status == TaskExecutionStatus.TIMEOUT;
     }
 
     private boolean isDependencySatisfied(Long workflowExecutionId,Dependency dependency,Map<Long,TaskExecutionStatus> taskStatuses){
@@ -102,14 +179,40 @@ public class ExecutionRuntimeService {
                 return parentStatus==TaskExecutionStatus.FAILED;
 
             case EXPRESSION:
-                Map<String,Object> variables=executionContextService.getVariables(workflowExecutionId);
-                String expression=dependency.getExpression();
-                ExpressionLexer lexer=new ExpressionLexer(expression);
-                ExpressionParser parser=new ExpressionParser(lexer.tokenize());
 
-                ExpressionNode ast=parser.parse();
-                return (boolean) expressionEvaluator.evaluate(ast,variables);
+                Map<String, Object> variables =
+                        expressionContextService.buildContext(
+                                workflowExecutionId
+                        );
 
+                String expression =
+                        dependency.getExpression();
+
+                ExpressionLexer lexer =
+                        new ExpressionLexer(expression);
+
+                ExpressionParser parser =
+                        new ExpressionParser(
+                                lexer.tokenize()
+                        );
+
+                ExpressionNode ast =
+                        parser.parse();
+
+                Object result =
+                        expressionEvaluator.evaluate(
+                                ast,
+                                variables
+                        );
+
+                if (!(result instanceof Boolean)) {
+                    throw new IllegalArgumentException(
+                            "Expression must evaluate to boolean: "
+                                    + expression
+                    );
+                }
+
+                return (Boolean) result;
             default:
                 return false;
         }

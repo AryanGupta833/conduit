@@ -1,3 +1,4 @@
+
 package com.aryan.conduit.execution.service;
 
 import com.aryan.conduit.execution.entity.*;
@@ -12,6 +13,7 @@ import com.aryan.conduit.plugin.PluginManager;
 import com.aryan.conduit.plugin.PluginResult;
 import com.aryan.conduit.plugin.WorkflowPlugin;
 import com.aryan.conduit.workflow.dto.TaskFuture;
+import com.aryan.conduit.workflow.entity.TaskNode;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -40,6 +42,7 @@ public class TaskRunnerService {
     private final RetryPolicyFactory retryPolicyFactory;
     private final IdempotencyService idempotencyService;
     private final ObjectMapper objectMapper;
+    private final ConfigurationResolver configurationResolver;
 
 
     private Map<String, Object> executeTask(Long taskExecutionId)
@@ -172,16 +175,31 @@ public class TaskRunnerService {
                     "Executing plugin: " + pluginType
             );
 
-            /*
-             * Variables will later come from the workflow
-             * execution context / expression engine.
-             */
+            String configurationJson =
+                    taskExecution
+                            .getTaskNode()
+                            .getConfigurationJson();
+
+            String resolvedConfiguration =
+                    configurationResolver.resolve(
+                            taskExecution
+                                    .getWorkflowExecution()
+                                    .getId(),
+                            configurationJson
+                    );
+
+            TaskNode runtimeTaskNode =
+                    createRuntimeTaskNode(
+                            taskExecution.getTaskNode(),
+                            resolvedConfiguration
+                    );
+
             Map<String, Object> variables =
                     new HashMap<>();
 
             PluginResult result =
                     plugin.execute(
-                            taskExecution.getTaskNode(),
+                            runtimeTaskNode,
                             variables
                     );
 
@@ -524,7 +542,7 @@ public class TaskRunnerService {
     }
 
 
-    public void executeWithRetry(
+    public Map<String,Object> executeWithRetry(
             Long taskExecutionId,
             Integer maxRetries,
             Integer timeoutSeconds)
@@ -582,7 +600,7 @@ public class TaskRunnerService {
                                 + attempt
                 );
 
-                return;
+                return output;
 
             } catch (TaskLeaseLostException e) {
 
@@ -795,6 +813,26 @@ public class TaskRunnerService {
                 );
             }
         }
+    }
+
+
+    private TaskNode createRuntimeTaskNode(
+            TaskNode original,
+            String resolvedConfiguration
+    ) {
+        return TaskNode.builder()
+                .id(original.getId())
+                .name(original.getName())
+                .workflowVersion(original.getWorkflowVersion())
+                .timeoutSeconds(original.getTimeoutSeconds())
+                .maxRetries(original.getMaxRetries())
+                .joinCondition(original.getJoinCondition())
+                .pluginType(original.getPluginType())
+                .configurationJson(resolvedConfiguration)
+                .xPosition(original.getXPosition())
+                .yPosition(original.getYPosition())
+                .displayName(original.getDisplayName())
+                .build();
     }
 
 

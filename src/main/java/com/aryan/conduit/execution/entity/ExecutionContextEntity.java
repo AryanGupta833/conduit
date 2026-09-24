@@ -4,7 +4,7 @@ import jakarta.persistence.*;
 import lombok.*;
 
 @Entity
-@Table(name="execution_contexts")
+@Table(name = "execution_contexts")
 @Getter
 @Setter
 @NoArgsConstructor
@@ -17,9 +17,16 @@ public class ExecutionContextEntity {
     private Long id;
 
     @OneToOne
-    @JoinColumn(name="workflow_execution_id")
+    @JoinColumn(
+            name = "workflow_execution_id",
+            unique = true,
+            nullable = false
+    )
     private WorkflowExecution workflowExecution;
 
     @Column(columnDefinition = "TEXT")
     private String variableJson;
+
+    @Version
+    private Long version;
 }

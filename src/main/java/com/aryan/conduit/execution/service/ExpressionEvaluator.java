@@ -41,51 +41,101 @@ public class ExpressionEvaluator {
         throw new RuntimeException("Unknown node type: "+node.getClass().getSimpleName());
     }
 
-    private Object evaluateBinary(Object left,Object right,String operator){
-       switch (operator){
-           case "=="->{
-               return left!=null&&right!=null&&left.toString().equals(right.toString());
-           }
-           case "!="->{
-               return left==null||right==null||!left.toString().equals(right.toString());
-           }
-           case ">"->{
-               double leftValue=Double.parseDouble(left.toString());
-               double rightValue=Double.parseDouble(right.toString());
+    private Object evaluateBinary(
+            Object left,
+            Object right,
+            String operator
+    ) {
 
-               return leftValue>rightValue;
-           }
-           case "<"->{
-               double leftValue=Double.parseDouble(left.toString());
-               double rightValue=Double.parseDouble(right.toString());
+        if (left == null || right == null) {
 
-               return leftValue<rightValue;
-           }
-           case ">="->{
-               double leftValue=Double.parseDouble(left.toString());
-               double rightValue=Double.parseDouble(right.toString());
+            return switch (operator) {
+                case "==" -> left == right;
+                case "!=" -> left != right;
+                default -> throw new RuntimeException(
+                        operator + " cannot be used with null operands"
+                );
+            };
+        }
 
-               return leftValue>=rightValue;
-           }
-           case "<="->{
-               double leftValue=Double.parseDouble(left.toString());
-               double rightValue=Double.parseDouble(right.toString());
+        switch (operator) {
 
-               return leftValue<=rightValue;
-           }
-           case "&&"->{
-               if(!(left instanceof Boolean)||!(right instanceof Boolean)){
-                   throw new RuntimeException("&& requires boolean operands");
-               }
-               return (Boolean)left&&(Boolean) right;
-           }
-           case "||"->{
-               if(!(left instanceof Boolean)||!(right instanceof Boolean)){
-                   throw new RuntimeException("|| requires boolean operands");
-               }
-               return (Boolean)left||(Boolean)right;
-           }
-           default -> throw new RuntimeException("Unsupported operator: "+operator);
-       }
+            case "==" -> {
+                if (isNumeric(left) && isNumeric(right)) {
+                    return toDouble(left) == toDouble(right);
+                }
+
+                return left.toString().equals(right.toString());
+            }
+
+            case "!=" -> {
+                if (isNumeric(left) && isNumeric(right)) {
+                    return toDouble(left) != toDouble(right);
+                }
+
+                return !left.toString().equals(right.toString());
+            }
+
+            case ">" -> {
+                return toDouble(left) > toDouble(right);
+            }
+
+            case "<" -> {
+                return toDouble(left) < toDouble(right);
+            }
+
+            case ">=" -> {
+                return toDouble(left) >= toDouble(right);
+            }
+
+            case "<=" -> {
+                return toDouble(left) <= toDouble(right);
+            }
+
+            case "&&" -> {
+
+                if (!(left instanceof Boolean)
+                        || !(right instanceof Boolean)) {
+
+                    throw new RuntimeException(
+                            "&& requires boolean operands"
+                    );
+                }
+
+                return (Boolean) left && (Boolean) right;
+            }
+
+            case "||" -> {
+
+                if (!(left instanceof Boolean)
+                        || !(right instanceof Boolean)) {
+
+                    throw new RuntimeException(
+                            "|| requires boolean operands"
+                    );
+                }
+
+                return (Boolean) left || (Boolean) right;
+            }
+
+            default -> throw new RuntimeException(
+                    "Unsupported operator: " + operator
+            );
+        }
+    }
+
+    private boolean isNumeric(Object value) {
+        return value instanceof Number;
+    }
+
+    private double toDouble(Object value) {
+        if (!(value instanceof Number number)) {
+            throw new RuntimeException(
+                    "Expected numeric operand but got: "
+                            + value.getClass().getSimpleName()
+            );
+        }
+
+        return number.doubleValue();
     }
 }

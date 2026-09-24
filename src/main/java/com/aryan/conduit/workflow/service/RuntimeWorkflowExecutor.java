@@ -16,6 +16,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 
 @Service
 @RequiredArgsConstructor
@@ -77,7 +78,7 @@ public class RuntimeWorkflowExecutor{
             TaskExecution taskExecution=taskExecutionRepository.findByWorkflowExecution_IdAndTaskNode_Id(workflowExecutionId,taskId).orElseThrow();
 
             try{
-                taskRunnerService.executeWithRetry(taskExecution.getId(),taskExecution.getTaskNode().getMaxRetries(),taskExecution.getTaskNode().getTimeoutSeconds());
+                Map<String,Object> taskresult=taskRunnerService.executeWithRetry(taskExecution.getId(),taskExecution.getTaskNode().getMaxRetries(),taskExecution.getTaskNode().getTimeoutSeconds());
                 System.out.println("executeWithRetry returned for task "+taskId);
                 context.getTaskStatuses().put(taskId, TaskExecutionStatus.SUCCESS);
                 System.out.println("Task "+taskId+" marked SUCCESS");
