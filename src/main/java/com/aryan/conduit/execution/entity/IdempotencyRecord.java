@@ -4,6 +4,7 @@ import jakarta.persistence.*;
 import lombok.*;
 
 import java.time.LocalDateTime;
+import java.util.UUID;
 
 @Entity
 @Table(
@@ -41,4 +42,7 @@ public class IdempotencyRecord {
     private LocalDateTime completedAt;
 
     private LocalDateTime leaseUntil;
+
+    @Column(name = "lease_token", nullable = false)
+    private UUID leaseToken;
 }

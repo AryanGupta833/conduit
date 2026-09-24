@@ -5,9 +5,15 @@ import com.aryan.conduit.execution.repository.TaskExecutionRepository;
 import com.aryan.conduit.execution.repository.WorkflowExecutionRepository;
 import com.aryan.conduit.execution.retry.RetryPolicy;
 import com.aryan.conduit.execution.retry.RetryPolicyFactory;
+import com.aryan.conduit.execution.retry.TaskLeaseHeartbeat;
+import com.aryan.conduit.execution.retry.TaskLeaseLostException;
 import com.aryan.conduit.execution.retry.TaskTimeoutException;
 import com.aryan.conduit.plugin.PluginManager;
+import com.aryan.conduit.plugin.PluginResult;
+import com.aryan.conduit.plugin.WorkflowPlugin;
 import com.aryan.conduit.workflow.dto.TaskFuture;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -16,9 +22,9 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.*;
-import com.aryan.conduit.plugin.PluginResult;
-import com.aryan.conduit.plugin.WorkflowPlugin;
 
 @Service
 @RequiredArgsConstructor
@@ -33,13 +39,13 @@ public class TaskRunnerService {
     private final PluginManager pluginManager;
     private final RetryPolicyFactory retryPolicyFactory;
     private final IdempotencyService idempotencyService;
+    private final ObjectMapper objectMapper;
 
 
     private Map<String, Object> executeTask(Long taskExecutionId)
             throws InterruptedException {
 
         return executeTaskInternal(taskExecutionId);
-
     }
 
 
@@ -59,18 +65,18 @@ public class TaskRunnerService {
                                 new IllegalStateException(
                                         "Task execution not found: "
                                                 + taskExecutionId
-                                ));
+                                )
+                        );
 
         String idempotencyKey =
                 taskExecution.getIdempotencyKey();
 
         /*
-         * Check whether this logical task has already
-         * completed successfully.
+         * First check whether this logical task
+         * has already completed successfully.
          */
         var completedResult =
                 idempotencyService.getCompletedResult(idempotencyKey);
-
 
         if (completedResult.isPresent()) {
 
@@ -84,15 +90,21 @@ public class TaskRunnerService {
         }
 
         /*
-         * Try to acquire ownership of this logical task.
+         * Try to acquire ownership.
          *
-         * The UNIQUE constraint on idempotency_key ensures
-         * that only one worker can acquire it.
+         * If successful, we receive the lease token
+         * identifying this worker's ownership.
          */
-        boolean acquired =
+        Optional<UUID> leaseToken =
                 idempotencyService.tryStart(idempotencyKey);
 
-        if (!acquired) {
+        /*
+         * IMPORTANT:
+         *
+         * Do NOT start the heartbeat before confirming
+         * ownership.
+         */
+        if (leaseToken.isEmpty()) {
 
             /*
              * Another worker may have completed the task
@@ -114,8 +126,7 @@ public class TaskRunnerService {
             }
 
             /*
-             * The task is currently being executed by
-             * another worker.
+             * Another worker currently owns the task.
              */
             throw new IllegalStateException(
                     "Task is already being executed: "
@@ -124,8 +135,26 @@ public class TaskRunnerService {
         }
 
         /*
+         * We own the task.
+         *
+         * This token uniquely identifies our lease.
+         */
+        UUID token = leaseToken.get();
+
+        /*
+         * Only now should the heartbeat start.
+         */
+        TaskLeaseHeartbeat heartbeat =
+                new TaskLeaseHeartbeat(
+                        idempotencyService,
+                        idempotencyKey,
+                        token
+                );
+
+        heartbeat.start();
+
+        /*
          * Idempotency ownership was successfully acquired.
-         * Only now should the TaskExecution become RUNNING.
          */
         taskExecutionService.markRunning(taskExecutionId);
 
@@ -157,6 +186,25 @@ public class TaskRunnerService {
                     );
 
             /*
+             * IMPORTANT:
+             *
+             * Never commit a result if our lease was lost.
+             */
+            if (heartbeat.isLeaseLost()) {
+
+                executionLogService.log(
+                        taskExecutionId,
+                        LogLevel.ERROR,
+                        "Task lease lost before completion"
+                );
+
+                throw new TaskLeaseLostException(
+                        "Idempotency lease lost for task: "
+                                + taskExecutionId
+                );
+            }
+
+            /*
              * Plugin itself reported failure.
              */
             if (!result.isSuccess()) {
@@ -169,10 +217,18 @@ public class TaskRunnerService {
                 );
 
                 /*
-                 * Release the idempotency lock so that
-                 * the retry mechanism can execute the task again.
+                 * Only release if we still own the lease.
+                 *
+                 * The token protects us from accidentally
+                 * releasing another worker's lease.
                  */
-                idempotencyService.release(idempotencyKey);
+                if (!heartbeat.isLeaseLost()) {
+
+                    idempotencyService.release(
+                            idempotencyKey,
+                            token
+                    );
+                }
 
                 throw new RuntimeException(
                         result.getOutput()
@@ -182,13 +238,75 @@ public class TaskRunnerService {
             /*
              * Plugin completed successfully.
              *
-             * Store the result before marking the task
-             * as successfully completed.
+             * Double-check lease ownership immediately before
+             * committing the result.
              */
-            idempotencyService.complete(
-                    idempotencyKey,
-                    result
-            );
+            if (heartbeat.isLeaseLost()) {
+
+                executionLogService.log(
+                        taskExecutionId,
+                        LogLevel.ERROR,
+                        "Task lease lost before result commit"
+                );
+
+                throw new TaskLeaseLostException(
+                        "Idempotency lease lost before result commit: "
+                                + taskExecutionId
+                );
+            }
+
+            /*
+             * Serialize the PluginResult as real JSON.
+             *
+             * This is important because IdempotencyService later
+             * deserializes resultJson using ObjectMapper.
+             */
+            String resultJson;
+
+            try {
+
+                resultJson =
+                        objectMapper.writeValueAsString(result);
+
+            } catch (JsonProcessingException e) {
+
+                throw new IllegalStateException(
+                        "Failed to serialize plugin result",
+                        e
+                );
+            }
+
+            /*
+             * Store the result as COMPLETED.
+             *
+             * The database verifies:
+             *
+             * key
+             * + lease token
+             * + IN_PROGRESS
+             * + unexpired lease
+             */
+            boolean completed =
+                    idempotencyService.complete(
+                            idempotencyKey,
+                            token,
+                            resultJson
+                    );
+
+            if (!completed) {
+
+                executionLogService.log(
+                        taskExecutionId,
+                        LogLevel.ERROR,
+                        "Task result rejected because idempotency lease "
+                                + "is no longer valid"
+                );
+
+                throw new TaskLeaseLostException(
+                        "Could not complete task because lease is no longer "
+                                + "valid: " + taskExecutionId
+                );
+            }
 
             executionLogService.log(
                     taskExecutionId,
@@ -200,17 +318,39 @@ public class TaskRunnerService {
 
             return pluginResultToMap(result);
 
-        }
-
-         catch (Exception e) {
+        } catch (TaskLeaseLostException e) {
 
             /*
-             * Plugin threw an exception.
+             * VERY IMPORTANT:
              *
-             * Release the idempotency ownership so the
-             * existing retry mechanism can attempt it again.
+             * Never call release() here.
+             *
+             * Another worker may already have reclaimed
+             * the expired lease.
              */
-            idempotencyService.release(idempotencyKey);
+            executionLogService.log(
+                    taskExecutionId,
+                    LogLevel.ERROR,
+                    "Task execution stopped because lease was lost"
+            );
+
+            throw e;
+
+        } catch (Exception e) {
+
+            /*
+             * If lease was lost, DO NOT release it.
+             *
+             * The lease token additionally protects against
+             * releasing another worker's lease.
+             */
+            if (!heartbeat.isLeaseLost()) {
+
+                idempotencyService.release(
+                        idempotencyKey,
+                        token
+                );
+            }
 
             executionLogService.log(
                     taskExecutionId,
@@ -220,6 +360,14 @@ public class TaskRunnerService {
             );
 
             throw e;
+
+        } finally {
+
+            /*
+             * Always stop the heartbeat when this attempt
+             * finishes.
+             */
+            heartbeat.stop();
         }
     }
 
@@ -253,7 +401,6 @@ public class TaskRunnerService {
                 List<TaskFuture> futures =
                         new ArrayList<>();
 
-
                 for (Long taskId : stage) {
 
                     TaskExecution taskExecution =
@@ -271,7 +418,6 @@ public class TaskRunnerService {
                             taskExecution
                                     .getTaskNode()
                                     .getTimeoutSeconds();
-
 
                     Future<?> future =
                             executorService.submit(() -> {
@@ -301,7 +447,6 @@ public class TaskRunnerService {
                                 return null;
                             });
 
-
                     futures.add(
                             new TaskFuture(
                                     future,
@@ -311,10 +456,7 @@ public class TaskRunnerService {
                     );
                 }
 
-
                 /*
-                 * We no longer apply the timeout here.
-                 *
                  * Timeout is handled inside each retry attempt.
                  */
                 for (TaskFuture taskFuture : futures) {
@@ -338,18 +480,15 @@ public class TaskRunnerService {
                     }
                 }
 
-
                 System.out.println(
                         "Completed Stage : "
                                 + stage
                 );
             }
 
-
             workflowExecution.setStatus(
                     WorkflowExecutionStatus.SUCCESS
             );
-
 
         } catch (Exception e) {
 
@@ -369,7 +508,6 @@ public class TaskRunnerService {
             );
 
             throw new RuntimeException(e);
-
 
         } finally {
 
@@ -392,20 +530,16 @@ public class TaskRunnerService {
             Integer timeoutSeconds)
             throws InterruptedException {
 
-
         RetryPolicy policy =
                 retryPolicyFactory.defaultPolicy(
                         maxRetries
                 );
 
-
         int attempt = 0;
-
 
         while (true) {
 
             attempt++;
-
 
             try {
 
@@ -417,25 +551,21 @@ public class TaskRunnerService {
                                 + " started"
                 );
 
-
                 Map<String, Object> output =
                         executeAttemptWithTimeout(
                                 taskExecutionId,
                                 timeoutSeconds
                         );
 
-
                 TaskExecution taskExecution =
                         taskExecutionRepository
                                 .findById(taskExecutionId)
                                 .orElseThrow();
 
-
                 Long workflowExecutionId =
                         taskExecution
                                 .getWorkflowExecution()
                                 .getId();
-
 
                 taskOutputService.storeOutput(
                         workflowExecutionId,
@@ -445,7 +575,6 @@ public class TaskRunnerService {
                         output
                 );
 
-
                 executionLogService.log(
                         taskExecutionId,
                         LogLevel.INFO,
@@ -453,9 +582,22 @@ public class TaskRunnerService {
                                 + attempt
                 );
 
-
                 return;
 
+            } catch (TaskLeaseLostException e) {
+
+                /*
+                 * Lease loss is NOT a normal retry.
+                 *
+                 * Another worker may now own this task.
+                 */
+                executionLogService.log(
+                        taskExecutionId,
+                        LogLevel.ERROR,
+                        "Task lease lost; execution cannot continue safely"
+                );
+
+                throw e;
 
             } catch (TaskTimeoutException e) {
 
@@ -466,7 +608,6 @@ public class TaskRunnerService {
                                 + attempt
                 );
 
-
                 if (!policy.shouldRetry(attempt)) {
 
                     executionLogService.log(
@@ -475,12 +616,15 @@ public class TaskRunnerService {
                             "Task failed permanently after timeout"
                     );
 
-                    taskExecutionService.markTimeout(taskExecutionId);
+                    taskExecutionService.markTimeout(
+                            taskExecutionId
+                    );
 
                     throw e;
                 }
 
-                long delay = policy.calculateDelay(attempt);
+                long delay =
+                        policy.calculateDelay(attempt);
 
                 executionLogService.log(
                         taskExecutionId,
@@ -494,10 +638,11 @@ public class TaskRunnerService {
                                 + " ms"
                 );
 
-                taskExecutionService.markRetrying(taskExecutionId);
+                taskExecutionService.markRetrying(
+                        taskExecutionId
+                );
 
                 Thread.sleep(delay);
-
 
             } catch (InterruptedException e) {
 
@@ -516,9 +661,7 @@ public class TaskRunnerService {
 
                 throw e;
 
-
             } catch (Exception e) {
-
 
                 if (!policy.shouldRetry(attempt)) {
 
@@ -537,10 +680,8 @@ public class TaskRunnerService {
                     throw e;
                 }
 
-
                 long delay =
                         policy.calculateDelay(attempt);
-
 
                 executionLogService.log(
                         taskExecutionId,
@@ -554,11 +695,9 @@ public class TaskRunnerService {
                                 + " ms"
                 );
 
-
                 taskExecutionService.markRetrying(
                         taskExecutionId
                 );
-
 
                 Thread.sleep(delay);
             }
@@ -571,22 +710,18 @@ public class TaskRunnerService {
             Integer timeoutSeconds)
             throws InterruptedException {
 
-
         int timeout =
                 timeoutSeconds == null || timeoutSeconds <= 0
                         ? 30
                         : timeoutSeconds;
 
-
         ExecutorService attemptExecutor =
                 Executors.newSingleThreadExecutor();
-
 
         Future<Map<String, Object>> future =
                 attemptExecutor.submit(
                         () -> executeTask(taskExecutionId)
                 );
-
 
         try {
 
@@ -594,7 +729,6 @@ public class TaskRunnerService {
                     timeout,
                     TimeUnit.SECONDS
             );
-
 
         } catch (TimeoutException e) {
 
@@ -608,7 +742,6 @@ public class TaskRunnerService {
                             + " seconds"
             );
 
-
         } catch (ExecutionException e) {
 
             Throwable cause =
@@ -619,7 +752,6 @@ public class TaskRunnerService {
             }
 
             throw new RuntimeException(cause);
-
 
         } finally {
 
@@ -664,20 +796,38 @@ public class TaskRunnerService {
             }
         }
     }
+
+
     private Map<String, Object> pluginResultToMap(
             PluginResult result) {
 
-        Map<String, Object> output = new HashMap<>();
+        Map<String, Object> output =
+                new HashMap<>();
 
-        output.put("success", result.isSuccess());
-        output.put("output", result.getOutput());
+        output.put(
+                "success",
+                result.isSuccess()
+        );
+
+        output.put(
+                "output",
+                result.getOutput()
+        );
 
         if (result.getVariables() != null) {
-            output.put("variables", result.getVariables());
+
+            output.put(
+                    "variables",
+                    result.getVariables()
+            );
         }
 
         if (result.getMetadata() != null) {
-            output.put("metadata", result.getMetadata());
+
+            output.put(
+                    "metadata",
+                    result.getMetadata()
+            );
         }
 
         return output;

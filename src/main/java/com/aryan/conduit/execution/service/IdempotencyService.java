@@ -7,12 +7,11 @@ import com.aryan.conduit.plugin.PluginResult;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
-import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.LocalDateTime;
 import java.util.Optional;
+import java.util.UUID;
 
 @Service
 @RequiredArgsConstructor
@@ -23,7 +22,7 @@ public class IdempotencyService {
 
 
     @Transactional
-    public boolean tryStart(String idempotencyKey) {
+    public Optional<UUID> tryStart(String idempotencyKey) {
 
         Optional<IdempotencyRecord> existing =
                 repository.findByIdempotencyKey(idempotencyKey);
@@ -33,53 +32,70 @@ public class IdempotencyService {
             IdempotencyRecord record = existing.get();
 
             /*
-             * Completed operations must never execute again.
+             * Completed work must never execute again.
              */
             if (record.getStatus() == IdempotencyStatus.COMPLETED) {
-                return false;
+                return Optional.empty();
             }
 
             /*
-             * Existing execution.
+             * Existing lease:
+             *
+             * Let the database decide whether the lease
+             * is expired. If expired, atomically reclaim it
+             * and generate a new fencing token.
              */
             if (record.getStatus() == IdempotencyStatus.IN_PROGRESS) {
 
-                /*
-                 * Valid lease → another worker owns it.
-                 */
-                if (record.getLeaseUntil() != null
-                        && record.getLeaseUntil()
-                        .isAfter(LocalDateTime.now())) {
+                int reclaimed =
+                        repository.reclaimExpiredLease(idempotencyKey);
 
-                    return false;
+                if (reclaimed != 1) {
+                    return Optional.empty();
                 }
 
-                /*
-                 * Expired lease → attempt atomic reclamation.
-                 */
-                return repository.reclaimExpiredLease(
-                        idempotencyKey
-                ) == 1;
+                return repository
+                        .findByIdempotencyKey(idempotencyKey)
+                        .map(IdempotencyRecord::getLeaseToken);
             }
 
             /*
-             * Previous execution failed.
-             * Atomically reacquire with a fresh lease.
+             * Failed execution can be reacquired.
+             * A fresh fencing token is generated.
              */
             if (record.getStatus() == IdempotencyStatus.FAILED) {
 
-                return repository.reacquireFailed(
-                        idempotencyKey
-                ) == 1;
+                int reacquired =
+                        repository.reacquireFailed(idempotencyKey);
+
+                if (reacquired != 1) {
+                    return Optional.empty();
+                }
+
+                return repository
+                        .findByIdempotencyKey(idempotencyKey)
+                        .map(IdempotencyRecord::getLeaseToken);
             }
         }
 
         /*
-         * No record exists.
-         * Atomically create one with a 60-second lease.
+         * No existing record.
+         *
+         * INSERT ... ON CONFLICT DO NOTHING makes
+         * this safe under concurrent requests.
          */
-        return repository.insertIfAbsent(idempotencyKey) == 1;
+        int inserted =
+                repository.insertIfAbsent(idempotencyKey);
+
+        if (inserted != 1) {
+            return Optional.empty();
+        }
+
+        return repository
+                .findByIdempotencyKey(idempotencyKey)
+                .map(IdempotencyRecord::getLeaseToken);
     }
+
 
     @Transactional(readOnly = true)
     public Optional<PluginResult> getCompletedResult(
@@ -87,60 +103,71 @@ public class IdempotencyService {
 
         return repository.findByIdempotencyKey(idempotencyKey)
                 .filter(record ->
-                        record.getStatus()
-                                == IdempotencyStatus.COMPLETED)
+                        record.getStatus() == IdempotencyStatus.COMPLETED)
                 .map(this::deserializeResult);
     }
 
+
     @Transactional
-    public void complete(
+    public boolean complete(
             String idempotencyKey,
-            PluginResult result) {
-
-        IdempotencyRecord record =
-                repository.findByIdempotencyKey(idempotencyKey)
-                        .orElseThrow(() ->
-                                new IllegalStateException(
-                                        "Idempotency record not found: "
-                                                + idempotencyKey));
-
-        record.setStatus(IdempotencyStatus.COMPLETED);
-        record.setResultJson(serializeResult(result));
-        record.setCompletedAt(LocalDateTime.now());
-
-        repository.save(record);
-    }
-
-    @Transactional
-    public void release(String idempotencyKey) {
-
-        IdempotencyRecord record =
-                repository.findByIdempotencyKey(idempotencyKey)
-                        .orElseThrow(() ->
-                                new IllegalStateException(
-                                        "Idempotency record not found: "
-                                                + idempotencyKey));
+            UUID leaseToken,
+            String resultJson) {
 
         /*
-         * Only IN_PROGRESS executions can be released.
+         * Completion is fenced by the lease token.
          *
-         * If the operation is already COMPLETED, we must
-         * never turn it back into FAILED.
+         * A stale worker cannot complete work after
+         * another worker has reclaimed the lease.
          */
-        if (record.getStatus() == IdempotencyStatus.IN_PROGRESS) {
-
-            record.setStatus(IdempotencyStatus.FAILED);
-            record.setResultJson(null);
-            record.setCompletedAt(null);
-
-            repository.save(record);
-        }
+        return repository.completeIfLeaseValid(
+                idempotencyKey,
+                leaseToken,
+                resultJson
+        ) == 1;
     }
+
+
+    @Transactional
+    public void release(
+            String idempotencyKey,
+            UUID leaseToken) {
+
+        /*
+         * Release must also be fenced.
+         *
+         * A stale worker must not be able to mark
+         * another worker's active lease as FAILED.
+         */
+        repository.releaseIfLeaseValid(
+                idempotencyKey,
+                leaseToken
+        );
+    }
+
+
+    @Transactional
+    public boolean renewLease(
+            String idempotencyKey,
+            UUID leaseToken) {
+
+        /*
+         * Only the worker holding the current token
+         * can renew the lease.
+         */
+        return repository.renewLease(
+                idempotencyKey,
+                leaseToken
+        ) == 1;
+    }
+
 
     private String serializeResult(PluginResult result) {
 
         try {
+
             return objectMapper.writeValueAsString(result);
+
         } catch (JsonProcessingException e) {
 
             throw new IllegalStateException(
@@ -149,6 +176,7 @@ public class IdempotencyService {
             );
         }
     }
+
 
     private PluginResult deserializeResult(
             IdempotencyRecord record) {
