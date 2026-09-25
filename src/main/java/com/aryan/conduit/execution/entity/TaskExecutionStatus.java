@@ -7,5 +7,6 @@ public enum TaskExecutionStatus {
     FAILED,
     RETRYING,
     SKIPPED,
-    TIMEOUT
+    TIMEOUT,
+    QUEUED,
 }

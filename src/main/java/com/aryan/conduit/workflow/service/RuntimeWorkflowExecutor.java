@@ -4,15 +4,15 @@ import com.aryan.conduit.execution.entity.TaskExecution;
 import com.aryan.conduit.execution.entity.TaskExecutionStatus;
 import com.aryan.conduit.execution.entity.WorkflowExecution;
 import com.aryan.conduit.execution.entity.WorkflowExecutionStatus;
+import com.aryan.conduit.execution.queue.TaskMessage;
+import com.aryan.conduit.execution.queue.TaskQueueService;
 import com.aryan.conduit.execution.repository.TaskExecutionRepository;
 import com.aryan.conduit.execution.repository.WorkflowExecutionRepository;
 import com.aryan.conduit.execution.service.ExecutionRuntimeService;
-import com.aryan.conduit.execution.service.TaskRunnerService;
 import com.aryan.conduit.workflow.dto.RuntimeExecutionContext;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
-import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 
@@ -22,8 +22,8 @@ public class RuntimeWorkflowExecutor {
 
     private final ExecutionRuntimeService executionRuntimeService;
     private final TaskExecutionRepository taskExecutionRepository;
-    private final TaskRunnerService taskRunnerService;
     private final WorkflowExecutionRepository workflowExecutionRepository;
+    private final TaskQueueService taskQueueService;
 
     public void simulate(Long workflowVersionId) {
 
@@ -72,6 +72,13 @@ public class RuntimeWorkflowExecutor {
                         workflowVersionId
                 );
 
+        /*
+         * Dispatch currently ready tasks.
+         *
+         * IMPORTANT:
+         * We do NOT execute the task here anymore.
+         * The worker is responsible for execution.
+         */
         while (!context.getReadyQueue().isEmpty()) {
 
             workflowExecution =
@@ -79,7 +86,7 @@ public class RuntimeWorkflowExecutor {
                             .findById(workflowExecutionId)
                             .orElseThrow();
 
-            while (
+            if (
                     workflowExecution.getStatus()
                             == WorkflowExecutionStatus.PAUSED
             ) {
@@ -90,20 +97,7 @@ public class RuntimeWorkflowExecutor {
                                 + " is paused"
                 );
 
-                try {
-
-                    Thread.sleep(1000);
-
-                } catch (InterruptedException e) {
-
-                    Thread.currentThread().interrupt();
-                    return;
-                }
-
-                workflowExecution =
-                        workflowExecutionRepository
-                                .findById(workflowExecutionId)
-                                .orElseThrow();
+                return;
             }
 
             if (
@@ -119,14 +113,6 @@ public class RuntimeWorkflowExecutor {
 
                 markRemainingTasksSkipped(
                         workflowExecutionId
-                );
-
-                workflowExecution.setFinishedAt(
-                        LocalDateTime.now()
-                );
-
-                workflowExecutionRepository.save(
-                        workflowExecution
                 );
 
                 return;
@@ -152,11 +138,8 @@ public class RuntimeWorkflowExecutor {
                             .orElseThrow();
 
             /*
-             * A task can be marked SKIPPED by
-             * ExecutionRuntimeService while evaluating
+             * A task may have been skipped while evaluating
              * conditional branches.
-             *
-             * Never execute a task that is already skipped.
              */
             if (
                     context.getTaskStatuses().get(taskId)
@@ -174,190 +157,63 @@ public class RuntimeWorkflowExecutor {
                                 + " is SKIPPED"
                 );
 
-                executionRuntimeService.evaluateChildren(
-                        workflowExecutionId,
-                        taskId,
-                        context
-                );
-
                 continue;
             }
 
-            try {
-
-                Map<String, Object> taskResult =
-                        taskRunnerService.executeWithRetry(
-                                taskExecution.getId(),
-                                taskExecution
-                                        .getTaskNode()
-                                        .getMaxRetries(),
-                                taskExecution
-                                        .getTaskNode()
-                                        .getTimeoutSeconds()
-                        );
-
-                System.out.println(
-                        "executeWithRetry returned for task "
-                                + taskId
-                );
-
-                /*
-                 * Update runtime state.
-                 */
-                context.getTaskStatuses().put(
-                        taskId,
-                        TaskExecutionStatus.SUCCESS
-                );
-
-                /*
-                 * Persist execution state.
-                 *
-                 * This is important because markRemainingTasksSkipped()
-                 * checks the database status. Without this update,
-                 * a successfully executed task remains PENDING in the
-                 * database and can incorrectly be marked SKIPPED later.
-                 */
-                taskExecution.setStatus(
-                        TaskExecutionStatus.SUCCESS
-                );
-
-                taskExecutionRepository.save(
-                        taskExecution
-                );
-
-                System.out.println(
-                        "Task "
-                                + taskId
-                                + " marked SUCCESS"
-                );
-
-            } catch (Exception e) {
-
-                System.out.println(
-                        "Task "
-                                + taskId
-                                + " failed with "
-                                + e.getClass().getSimpleName()
-                                + " : "
-                                + e.getMessage()
-                );
-
-                /*
-                 * Update runtime state.
-                 */
-                context.getTaskStatuses().put(
-                        taskId,
-                        TaskExecutionStatus.FAILED
-                );
-
-                /*
-                 * Persist execution state.
-                 */
-                taskExecution.setStatus(
-                        TaskExecutionStatus.FAILED
-                );
-
-                taskExecutionRepository.save(
-                        taskExecution
-                );
-
-                System.out.println(
-                        "Task "
-                                + taskId
-                                + " marked FAILED"
-                );
-            }
-
-            System.out.println(
-                    "Evaluating children of task "
-                            + taskId
+            /*
+             * Move task into QUEUED state before putting it
+             * onto Redis.
+             */
+            taskExecution.setStatus(
+                    TaskExecutionStatus.QUEUED
             );
 
-            executionRuntimeService.evaluateChildren(
-                    workflowExecutionId,
-                    taskId,
-                    context
+            taskExecutionRepository.save(
+                    taskExecution
             );
 
             /*
-             * Persist any SKIPPED tasks discovered while
-             * evaluating this task's children.
+             * Dispatch task to Redis.
              */
-            persistRuntimeSkippedTasks(
-                    workflowExecutionId,
-                    context
+            taskQueueService.enqueue(
+                    new TaskMessage(
+                            workflowExecutionId,
+                            taskExecution.getId(),
+                            taskId
+                    )
             );
 
             System.out.println(
-                    "Current queue = "
-                            + context.getReadyQueue()
+                    "Task "
+                            + taskId
+                            + " queued for execution"
             );
+
+            /*
+             * IMPORTANT:
+             *
+             * Do NOT mark the task SUCCESS here.
+             *
+             * The worker will execute the task and
+             * TaskResultHandler will update its final state.
+             */
         }
 
+        /*
+         * The dispatcher must NOT finalize the workflow here.
+         *
+         * Tasks may still be:
+         *
+         * QUEUED
+         * RUNNING
+         * RETRYING
+         *
+         * Their results will arrive asynchronously.
+         */
         System.out.println(
-                "Queue empty finalizing workflow "
+                "Finished dispatching tasks for workflow "
                         + workflowExecutionId
         );
-
-        System.out.println(
-                "Final task statuses = "
-                        + context.getTaskStatuses()
-        );
-
-        /*
-         * Any PENDING tasks left after the runtime queue is
-         * exhausted are no longer executable.
-         */
-        markRemainingTasksSkipped(
-                workflowExecutionId
-        );
-
-        /*
-         * Synchronize runtime SKIPPED states before
-         * determining the final workflow status.
-         */
-        persistRuntimeSkippedTasks(
-                workflowExecutionId,
-                context
-        );
-
-        finalizeWorkflow(
-                workflowExecutionId,
-                context
-        );
-    }
-
-    private void persistRuntimeSkippedTasks(
-            Long workflowExecutionId,
-            RuntimeExecutionContext context
-    ) {
-
-        for (
-                Map.Entry<Long, TaskExecutionStatus> entry
-                : context.getTaskStatuses().entrySet()
-        ) {
-
-            Long taskId = entry.getKey();
-
-            TaskExecutionStatus status =
-                    entry.getValue();
-
-            if (status != TaskExecutionStatus.SKIPPED) {
-                continue;
-            }
-
-            taskExecutionRepository
-                    .findByWorkflowExecution_IdAndTaskNode_Id(
-                            workflowExecutionId,
-                            taskId
-                    )
-                    .ifPresent(taskExecution ->
-                            persistSkippedTask(
-                                    taskExecution,
-                                    context
-                            )
-                    );
-        }
     }
 
     private void persistSkippedTask(
@@ -427,63 +283,5 @@ public class RuntimeWorkflowExecutor {
                 );
             }
         }
-    }
-
-    private void finalizeWorkflow(
-            Long workflowExecutionId,
-            RuntimeExecutionContext context
-    ) {
-
-        WorkflowExecution workflowExecution =
-                workflowExecutionRepository
-                        .findById(workflowExecutionId)
-                        .orElseThrow();
-
-        boolean hasFailure =
-                context.getTaskStatuses()
-                        .values()
-                        .stream()
-                        .anyMatch(
-                                status ->
-                                        status
-                                                == TaskExecutionStatus.FAILED
-                                                || status
-                                                == TaskExecutionStatus.TIMEOUT
-                        );
-
-        if (hasFailure) {
-
-            workflowExecution.setStatus(
-                    WorkflowExecutionStatus.FAILED
-            );
-
-            System.out.println(
-                    "Setting workflow to FAILED"
-            );
-
-        } else {
-
-            workflowExecution.setStatus(
-                    WorkflowExecutionStatus.SUCCESS
-            );
-
-            System.out.println(
-                    "Setting workflow to SUCCESS"
-            );
-        }
-
-        workflowExecution.setFinishedAt(
-                LocalDateTime.now()
-        );
-
-        workflowExecutionRepository.save(
-                workflowExecution
-        );
-
-        System.out.println(
-                "Workflow execution "
-                        + workflowExecutionId
-                        + " saved successfully"
-        );
     }
 }
