@@ -10,7 +10,10 @@ import org.springframework.data.redis.connection.stream.StreamOffset;
 import org.springframework.data.redis.connection.stream.StreamRecords;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
-
+import org.springframework.data.domain.Range;
+import org.springframework.data.redis.connection.stream.PendingMessage;
+import org.springframework.data.redis.connection.stream.PendingMessages;
+import java.time.Duration;
 import java.util.List;
 
 @Service
@@ -72,6 +75,64 @@ public class TaskQueueService {
                 .toList();
     }
 
+    public List<StreamMessage> recover(
+            String consumerName,
+            Duration minIdleTime,
+            int batchSize
+    ) {
+        if (!ensureConsumerGroup()) {
+            return List.of();
+        }
+
+        PendingMessages pendingMessages =
+                taskRedisTemplate
+                        .opsForStream()
+                        .pending(
+                                TASK_STREAM,
+                                CONSUMER_GROUP,
+                                Range.unbounded(),
+                                batchSize
+                        );
+
+        if (pendingMessages == null || pendingMessages.isEmpty()) {
+            return List.of();
+        }
+
+        List<RecordId> staleIds =
+                pendingMessages.stream()
+                        .filter(message ->
+                                !message
+                                        .getElapsedTimeSinceLastDelivery()
+                                        .minus(minIdleTime)
+                                        .isNegative()
+                        )
+                        .map(PendingMessage::getId)
+                        .toList();
+
+        if (staleIds.isEmpty()) {
+            return List.of();
+        }
+
+        List<MapRecord<String, Object, Object>> claimedRecords =
+                taskRedisTemplate
+                        .opsForStream()
+                        .claim(
+                                TASK_STREAM,
+                                CONSUMER_GROUP,
+                                consumerName,
+                                minIdleTime,
+                                staleIds.toArray(new RecordId[0])
+                        );
+
+        if (claimedRecords == null || claimedRecords.isEmpty()) {
+            return List.of();
+        }
+
+        return claimedRecords.stream()
+                .map(this::toStreamMessage)
+                .toList();
+    }
+
     public void acknowledge(
             RecordId recordId
     ) {
@@ -108,7 +169,7 @@ public class TaskQueueService {
 
         } catch (DataAccessException ignored) {
             /*
-             * The consumer group already exists.
+             * Consumer group already exists.
              */
         }
 

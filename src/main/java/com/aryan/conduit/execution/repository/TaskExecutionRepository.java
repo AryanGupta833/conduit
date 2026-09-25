@@ -32,4 +32,17 @@ public interface TaskExecutionRepository
             @Param("expectedStatus") TaskExecutionStatus expectedStatus,
             @Param("status") TaskExecutionStatus status
     );
+
+    @Modifying
+    @Query("""
+    UPDATE TaskExecution t
+    SET t.status = :queuedStatus
+    WHERE t.id = :taskExecutionId
+      AND t.status = :pendingStatus
+""")
+    int claimForQueue(
+            @Param("taskExecutionId") Long taskExecutionId,
+            @Param("pendingStatus") TaskExecutionStatus pendingStatus,
+            @Param("queuedStatus") TaskExecutionStatus queuedStatus
+    );
 }

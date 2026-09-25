@@ -13,6 +13,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.UUID;
 
@@ -116,6 +117,20 @@ public class TaskWorker {
             taskQueueService.acknowledge(
                     streamMessage.recordId()
             );
+        }
+    }
+    @Scheduled(fixedDelay = 10000)
+    public void recoverPendingTasks() {
+
+        List<StreamMessage> messages =
+                taskQueueService.recover(
+                        consumerName,
+                        Duration.ofSeconds(30),
+                        10
+                );
+
+        for (StreamMessage message : messages) {
+            process(message);
         }
     }
 }
