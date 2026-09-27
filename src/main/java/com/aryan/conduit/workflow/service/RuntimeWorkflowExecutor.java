@@ -9,6 +9,7 @@ import com.aryan.conduit.execution.queue.TaskQueueService;
 import com.aryan.conduit.execution.repository.TaskExecutionRepository;
 import com.aryan.conduit.execution.repository.WorkflowExecutionRepository;
 import com.aryan.conduit.execution.service.ExecutionRuntimeService;
+import com.aryan.conduit.execution.service.TaskDispatchService;
 import com.aryan.conduit.workflow.dto.RuntimeExecutionContext;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -23,7 +24,7 @@ public class RuntimeWorkflowExecutor {
     private final ExecutionRuntimeService executionRuntimeService;
     private final TaskExecutionRepository taskExecutionRepository;
     private final WorkflowExecutionRepository workflowExecutionRepository;
-    private final TaskQueueService taskQueueService;
+    private final TaskDispatchService taskDispatchService;
 
     public void simulate(Long workflowVersionId) {
 
@@ -164,23 +165,8 @@ public class RuntimeWorkflowExecutor {
              * Move task into QUEUED state before putting it
              * onto Redis.
              */
-            taskExecution.setStatus(
-                    TaskExecutionStatus.QUEUED
-            );
-
-            taskExecutionRepository.save(
+            taskDispatchService.dispatch(
                     taskExecution
-            );
-
-            /*
-             * Dispatch task to Redis.
-             */
-            taskQueueService.enqueue(
-                    new TaskMessage(
-                            workflowExecutionId,
-                            taskExecution.getId(),
-                            taskId
-                    )
             );
 
             System.out.println(

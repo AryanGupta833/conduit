@@ -4,8 +4,6 @@ import com.aryan.conduit.execution.entity.TaskExecution;
 import com.aryan.conduit.execution.entity.TaskExecutionStatus;
 import com.aryan.conduit.execution.entity.WorkflowExecution;
 import com.aryan.conduit.execution.entity.WorkflowExecutionStatus;
-import com.aryan.conduit.execution.queue.TaskMessage;
-import com.aryan.conduit.execution.queue.TaskQueueService;
 import com.aryan.conduit.execution.repository.TaskExecutionRepository;
 import com.aryan.conduit.execution.repository.WorkflowExecutionRepository;
 import com.aryan.conduit.workflow.dto.RuntimeExecutionContext;
@@ -15,7 +13,7 @@ import com.aryan.conduit.workflow.service.RuntimeWorkflowExecutor;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
+import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -23,7 +21,6 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
@@ -40,75 +37,45 @@ class RuntimeWorkflowExecutorTest {
     private WorkflowExecutionRepository workflowExecutionRepository;
 
     @Mock
-    private TaskQueueService taskQueueService;
+    private TaskDispatchService taskDispatchService;
 
-    @Mock
-    private WorkflowExecution workflowExecution;
-
-    @Mock
-    private WorkflowVersion workflowVersion;
-
+    @InjectMocks
     private RuntimeWorkflowExecutor executor;
+
+    private WorkflowExecution workflowExecution;
+    private WorkflowVersion workflowVersion;
 
     @BeforeEach
     void setUp() {
 
-        executor = new RuntimeWorkflowExecutor(
-                executionRuntimeService,
-                taskExecutionRepository,
-                workflowExecutionRepository,
-                taskQueueService
+        workflowVersion = new WorkflowVersion();
+        workflowVersion.setId(1L);
+
+        workflowExecution = new WorkflowExecution();
+        workflowExecution.setId(100L);
+        workflowExecution.setWorkflowVersion(workflowVersion);
+        workflowExecution.setStatus(
+                WorkflowExecutionStatus.RUNNING
         );
-
-        when(workflowExecutionRepository.findById(100L))
-                .thenReturn(Optional.of(workflowExecution));
-
-        when(workflowExecution.getWorkflowVersion())
-                .thenReturn(workflowVersion);
-
-        when(workflowVersion.getId())
-                .thenReturn(10L);
-    }
-
-    private TaskExecution createTaskExecution(
-            Long taskExecutionId,
-            Long taskNodeId
-    ) {
-
-        TaskNode taskNode =
-                TaskNode.builder()
-                        .id(taskNodeId)
-                        .name("Task-" + taskNodeId)
-                        .maxRetries(1)
-                        .timeoutSeconds(30)
-                        .build();
-
-        return TaskExecution.builder()
-                .id(taskExecutionId)
-                .workflowExecution(workflowExecution)
-                .taskNode(taskNode)
-                .status(TaskExecutionStatus.PENDING)
-                .retryCount(0)
-                .idempotencyKey("100:" + taskNodeId)
-                .build();
     }
 
     @Test
     void shouldQueueTaskSuccessfully() {
 
-        when(workflowExecution.getStatus())
-                .thenReturn(WorkflowExecutionStatus.RUNNING);
-
-        TaskExecution taskExecution =
-                createTaskExecution(1010L, 10L);
-
         RuntimeExecutionContext context =
                 new RuntimeExecutionContext();
 
         context.getReadyQueue().offer(10L);
+        context.getScheduledTasks().add(10L);
 
-        when(executionRuntimeService.initializeContext(10L))
+        when(workflowExecutionRepository.findById(100L))
+                .thenReturn(Optional.of(workflowExecution));
+
+        when(executionRuntimeService.initializeContext(1L))
                 .thenReturn(context);
+
+        TaskExecution taskExecution =
+                createTaskExecution(10L);
 
         when(taskExecutionRepository
                 .findByWorkflowExecution_IdAndTaskNode_Id(
@@ -117,6 +84,18 @@ class RuntimeWorkflowExecutorTest {
                 ))
                 .thenReturn(Optional.of(taskExecution));
 
+        doAnswer(invocation -> {
+
+            TaskExecution task =
+                    invocation.getArgument(0);
+
+            task.setStatus(TaskExecutionStatus.QUEUED);
+
+            return true;
+
+        }).when(taskDispatchService)
+                .dispatch(any(TaskExecution.class));
+
         executor.execute(100L);
 
         assertEquals(
@@ -124,46 +103,12 @@ class RuntimeWorkflowExecutorTest {
                 taskExecution.getStatus()
         );
 
-        verify(taskExecutionRepository)
-                .save(taskExecution);
-
-        ArgumentCaptor<TaskMessage> captor =
-                ArgumentCaptor.forClass(TaskMessage.class);
-
-        verify(taskQueueService)
-                .enqueue(captor.capture());
-
-        TaskMessage message = captor.getValue();
-
-        assertNotNull(message);
-
-        assertEquals(
-                100L,
-                message.workflowExecutionId()
-        );
-
-        assertEquals(
-                1010L,
-                message.taskExecutionId()
-        );
-
-        assertEquals(
-                10L,
-                message.taskNodeId()
-        );
+        verify(taskDispatchService)
+                .dispatch(taskExecution);
     }
 
     @Test
     void shouldQueueMultipleReadyTasks() {
-
-        when(workflowExecution.getStatus())
-                .thenReturn(WorkflowExecutionStatus.RUNNING);
-
-        TaskExecution task1 =
-                createTaskExecution(1010L, 10L);
-
-        TaskExecution task2 =
-                createTaskExecution(1020L, 20L);
 
         RuntimeExecutionContext context =
                 new RuntimeExecutionContext();
@@ -171,63 +116,88 @@ class RuntimeWorkflowExecutorTest {
         context.getReadyQueue().offer(10L);
         context.getReadyQueue().offer(20L);
 
-        when(executionRuntimeService.initializeContext(10L))
+        context.getScheduledTasks().add(10L);
+        context.getScheduledTasks().add(20L);
+
+        when(workflowExecutionRepository.findById(100L))
+                .thenReturn(Optional.of(workflowExecution));
+
+        when(executionRuntimeService.initializeContext(1L))
                 .thenReturn(context);
+
+        TaskExecution task10 =
+                createTaskExecution(10L);
+
+        TaskExecution task20 =
+                createTaskExecution(20L);
 
         when(taskExecutionRepository
                 .findByWorkflowExecution_IdAndTaskNode_Id(
                         100L,
                         10L
                 ))
-                .thenReturn(Optional.of(task1));
+                .thenReturn(Optional.of(task10));
 
         when(taskExecutionRepository
                 .findByWorkflowExecution_IdAndTaskNode_Id(
                         100L,
                         20L
                 ))
-                .thenReturn(Optional.of(task2));
+                .thenReturn(Optional.of(task20));
+
+        doAnswer(invocation -> {
+
+            TaskExecution task =
+                    invocation.getArgument(0);
+
+            task.setStatus(TaskExecutionStatus.QUEUED);
+
+            return true;
+
+        }).when(taskDispatchService)
+                .dispatch(any(TaskExecution.class));
 
         executor.execute(100L);
 
         assertEquals(
                 TaskExecutionStatus.QUEUED,
-                task1.getStatus()
+                task10.getStatus()
         );
 
         assertEquals(
                 TaskExecutionStatus.QUEUED,
-                task2.getStatus()
+                task20.getStatus()
         );
 
-        verify(taskQueueService, times(2))
-                .enqueue(any(TaskMessage.class));
+        verify(taskDispatchService)
+                .dispatch(task10);
 
-        verify(taskExecutionRepository, times(2))
-                .save(any(TaskExecution.class));
+        verify(taskDispatchService)
+                .dispatch(task20);
     }
 
     @Test
-    void shouldSkipTaskWithoutQueueing() {
-
-        when(workflowExecution.getStatus())
-                .thenReturn(WorkflowExecutionStatus.RUNNING);
-
-        TaskExecution taskExecution =
-                createTaskExecution(1010L, 10L);
+    void shouldSkipTaskWithoutDispatching() {
 
         RuntimeExecutionContext context =
                 new RuntimeExecutionContext();
 
         context.getReadyQueue().offer(10L);
+        context.getScheduledTasks().add(10L);
 
         context.getTaskStatuses().put(
                 10L,
                 TaskExecutionStatus.SKIPPED
         );
 
-        when(executionRuntimeService.initializeContext(10L))
+        when(workflowExecutionRepository.findById(100L))
+                .thenReturn(Optional.of(workflowExecution));
+
+        when(executionRuntimeService.initializeContext(1L))
                 .thenReturn(context);
+
+        TaskExecution taskExecution =
+                createTaskExecution(10L);
 
         when(taskExecutionRepository
                 .findByWorkflowExecution_IdAndTaskNode_Id(
@@ -246,64 +216,31 @@ class RuntimeWorkflowExecutorTest {
         verify(taskExecutionRepository)
                 .save(taskExecution);
 
-        verify(taskQueueService, never())
-                .enqueue(any(TaskMessage.class));
+        verify(taskDispatchService, never())
+                .dispatch(any(TaskExecution.class));
     }
 
     @Test
-    void shouldNotQueueAnythingWhenReadyQueueIsEmpty() {
+    void shouldMarkRemainingTasksSkippedWhenWorkflowCancelled() {
 
-        RuntimeExecutionContext context =
-                new RuntimeExecutionContext();
-
-        when(executionRuntimeService.initializeContext(10L))
-                .thenReturn(context);
-
-        executor.execute(100L);
-
-        verify(taskQueueService, never())
-                .enqueue(any(TaskMessage.class));
-
-        verify(taskExecutionRepository, never())
-                .save(any(TaskExecution.class));
-    }
-
-    @Test
-    void shouldStopDispatchingWhenWorkflowIsPaused() {
-
-        when(workflowExecution.getStatus())
-                .thenReturn(WorkflowExecutionStatus.PAUSED);
+        workflowExecution.setStatus(
+                WorkflowExecutionStatus.CANCELLED
+        );
 
         RuntimeExecutionContext context =
                 new RuntimeExecutionContext();
 
         context.getReadyQueue().offer(10L);
+        context.getScheduledTasks().add(10L);
 
-        when(executionRuntimeService.initializeContext(10L))
+        when(workflowExecutionRepository.findById(100L))
+                .thenReturn(Optional.of(workflowExecution));
+
+        when(executionRuntimeService.initializeContext(1L))
                 .thenReturn(context);
-
-        executor.execute(100L);
-
-        verify(taskQueueService, never())
-                .enqueue(any(TaskMessage.class));
-    }
-
-    @Test
-    void shouldSkipRemainingTasksWhenWorkflowIsCancelled() {
-
-        when(workflowExecution.getStatus())
-                .thenReturn(WorkflowExecutionStatus.CANCELLED);
-
-        RuntimeExecutionContext context =
-                new RuntimeExecutionContext();
-
-        context.getReadyQueue().offer(10L);
 
         TaskExecution taskExecution =
-                createTaskExecution(1010L, 10L);
-
-        when(executionRuntimeService.initializeContext(10L))
-                .thenReturn(context);
+                createTaskExecution(10L);
 
         when(taskExecutionRepository
                 .findByWorkflowExecution_Id(100L))
@@ -316,10 +253,76 @@ class RuntimeWorkflowExecutorTest {
                 taskExecution.getStatus()
         );
 
-        verify(taskQueueService, never())
-                .enqueue(any(TaskMessage.class));
-
         verify(taskExecutionRepository)
                 .save(taskExecution);
+
+        verify(taskDispatchService, never())
+                .dispatch(any(TaskExecution.class));
+    }
+
+    @Test
+    void shouldDoNothingWhenWorkflowPaused() {
+
+        workflowExecution.setStatus(
+                WorkflowExecutionStatus.PAUSED
+        );
+
+        RuntimeExecutionContext context =
+                new RuntimeExecutionContext();
+
+        context.getReadyQueue().offer(10L);
+
+        when(workflowExecutionRepository.findById(100L))
+                .thenReturn(Optional.of(workflowExecution));
+
+        when(executionRuntimeService.initializeContext(1L))
+                .thenReturn(context);
+
+        executor.execute(100L);
+
+        verify(taskExecutionRepository, never())
+                .findByWorkflowExecution_IdAndTaskNode_Id(
+                        anyLong(),
+                        anyLong()
+                );
+
+        verify(taskDispatchService, never())
+                .dispatch(any(TaskExecution.class));
+    }
+
+    @Test
+    void shouldNotQueueAnythingWhenReadyQueueIsEmpty() {
+
+        RuntimeExecutionContext context =
+                new RuntimeExecutionContext();
+
+        when(workflowExecutionRepository.findById(100L))
+                .thenReturn(Optional.of(workflowExecution));
+
+        when(executionRuntimeService.initializeContext(1L))
+                .thenReturn(context);
+
+        executor.execute(100L);
+
+        verify(taskDispatchService, never())
+                .dispatch(any(TaskExecution.class));
+    }
+
+    private TaskExecution createTaskExecution(Long taskId) {
+
+        TaskNode taskNode =
+                new TaskNode();
+
+        taskNode.setId(taskId);
+
+        return TaskExecution.builder()
+                .id(taskId + 1000)
+                .taskNode(taskNode)
+                .status(TaskExecutionStatus.PENDING)
+                .retryCount(0)
+                .idempotencyKey(
+                        "workflow-100:task-" + taskId
+                )
+                .build();
     }
 }

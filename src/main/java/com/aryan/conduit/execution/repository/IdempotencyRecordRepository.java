@@ -118,4 +118,15 @@ public interface IdempotencyRecordRepository
     int releaseIfLeaseValid(
             @Param("key") String key,
             @Param("token") UUID token);
+
+    @Query(value = """
+    SELECT COUNT(*) > 0
+    FROM idempotency_records
+    WHERE idempotency_key = :key
+      AND status = 'IN_PROGRESS'
+      AND lease_until < CURRENT_TIMESTAMP
+    """, nativeQuery = true)
+    boolean isLeaseExpired(
+            @Param("key") String key
+    );
 }

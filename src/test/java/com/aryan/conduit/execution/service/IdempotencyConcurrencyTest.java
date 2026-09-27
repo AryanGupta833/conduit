@@ -459,8 +459,11 @@ class IdempotencyConcurrencyTest {
                             leaseToken
                     );
 
-            heartbeat.start();
-
+            heartbeat.start(
+                    20,
+                    20,
+                    TimeUnit.SECONDS
+            );
             /*
              * Heartbeat runs every 20 seconds.
              */

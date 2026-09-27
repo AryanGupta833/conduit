@@ -196,4 +196,9 @@ public class IdempotencyService {
             );
         }
     }
+    public boolean isLeaseExpired(String idempotencyKey) {
+        return repository.isLeaseExpired(
+                idempotencyKey
+        );
+    }
 }

@@ -2,7 +2,6 @@ package com.aryan.conduit.execution.queue;
 
 import com.aryan.conduit.execution.entity.TaskExecution;
 import com.aryan.conduit.execution.entity.TaskExecutionStatus;
-import com.aryan.conduit.execution.queue.TaskResult;
 import com.aryan.conduit.execution.repository.TaskExecutionRepository;
 import com.aryan.conduit.execution.service.DistributedWorkflowCoordinator;
 import lombok.RequiredArgsConstructor;
@@ -14,7 +13,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class TaskResultHandler {
 
     private final TaskExecutionRepository taskExecutionRepository;
-    private final DistributedWorkflowCoordinator workflowCoordinator;
+    private final DistributedWorkflowCoordinator coordinator;
 
     @Transactional
     public void handle(TaskResult result) {
@@ -50,7 +49,7 @@ public class TaskResultHandler {
 
         taskExecutionRepository.save(taskExecution);
 
-        workflowCoordinator.handleTaskCompletion(
+        coordinator.handleTaskCompletion(
                 result.workflowExecutionId(),
                 result.taskNodeId()
         );

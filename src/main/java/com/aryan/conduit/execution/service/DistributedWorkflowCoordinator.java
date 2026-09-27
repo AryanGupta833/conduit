@@ -4,10 +4,10 @@ import com.aryan.conduit.execution.entity.TaskExecution;
 import com.aryan.conduit.execution.entity.TaskExecutionStatus;
 import com.aryan.conduit.execution.entity.WorkflowExecution;
 import com.aryan.conduit.execution.entity.WorkflowExecutionStatus;
-import com.aryan.conduit.execution.queue.TaskMessage;
-import com.aryan.conduit.execution.queue.TaskQueueService;
 import com.aryan.conduit.execution.repository.TaskExecutionRepository;
 import com.aryan.conduit.execution.repository.WorkflowExecutionRepository;
+import com.aryan.conduit.execution.service.ExecutionRuntimeService;
+import com.aryan.conduit.execution.service.TaskDispatchService;
 import com.aryan.conduit.workflow.entity.Dependency;
 import com.aryan.conduit.workflow.repository.DependencyRepository;
 import lombok.RequiredArgsConstructor;
@@ -26,7 +26,7 @@ public class DistributedWorkflowCoordinator {
     private final WorkflowExecutionRepository workflowExecutionRepository;
     private final DependencyRepository dependencyRepository;
     private final ExecutionRuntimeService executionRuntimeService;
-    private final TaskQueueService taskQueueService;
+    private final TaskDispatchService taskDispatchService;
 
     @Transactional
     public void handleTaskCompletion(
@@ -59,15 +59,34 @@ public class DistributedWorkflowCoordinator {
                 new HashMap<>();
 
         for (TaskExecution taskExecution : taskExecutions) {
+
             statuses.put(
                     taskExecution.getTaskNode().getId(),
                     taskExecution.getStatus()
             );
         }
 
+        processChildren(
+                workflowExecutionId,
+                completedTaskId,
+                statuses
+        );
+
+        checkWorkflowCompletion(
+                workflowExecutionId
+        );
+    }
+
+    private void processChildren(
+            Long workflowExecutionId,
+            Long parentTaskId,
+            Map<Long, TaskExecutionStatus> statuses
+    ) {
+
         List<Dependency> dependencies =
-                dependencyRepository
-                        .findByParent_Id(completedTaskId);
+                dependencyRepository.findByParent_Id(
+                        parentTaskId
+                );
 
         for (Dependency dependency : dependencies) {
 
@@ -82,13 +101,16 @@ public class DistributedWorkflowCoordinator {
                             )
                             .orElseThrow(() ->
                                     new IllegalStateException(
-                                            "Task execution not found for task: "
+                                            "Task execution not found: "
                                                     + childTaskId
                                     )
                             );
 
-            if (childExecution.getStatus()
-                    != TaskExecutionStatus.PENDING) {
+            TaskExecutionStatus currentStatus =
+                    statuses.get(childTaskId);
+
+            if (currentStatus != null &&
+                    currentStatus != TaskExecutionStatus.PENDING) {
                 continue;
             }
 
@@ -100,7 +122,17 @@ public class DistributedWorkflowCoordinator {
                     );
 
             if (runnable) {
-                enqueueTask(childExecution);
+
+                boolean dispatched =
+                        enqueueTask(childExecution);
+
+                if (dispatched) {
+                    statuses.put(
+                            childTaskId,
+                            TaskExecutionStatus.QUEUED
+                    );
+                }
+
                 continue;
             }
 
@@ -116,46 +148,32 @@ public class DistributedWorkflowCoordinator {
                         TaskExecutionStatus.SKIPPED
                 );
 
-                handleTaskCompletion(
+                processChildren(
                         workflowExecutionId,
-                        childTaskId
+                        childTaskId,
+                        statuses
                 );
             }
         }
-
-        checkWorkflowCompletion(
-                workflowExecutionId
-        );
     }
 
-    private void enqueueTask(
+    private boolean enqueueTask(
             TaskExecution taskExecution
     ) {
 
-        int claimed =
-                taskExecutionRepository.claimForQueue(
-                        taskExecution.getId(),
-                        TaskExecutionStatus.PENDING,
-                        TaskExecutionStatus.QUEUED
+        boolean dispatched =
+                taskDispatchService.dispatch(
+                        taskExecution
                 );
 
-        if (claimed == 0) {
-            return;
+        if (dispatched) {
+
+            taskExecution.setStatus(
+                    TaskExecutionStatus.QUEUED
+            );
         }
 
-        taskQueueService.enqueue(
-                new TaskMessage(
-                        taskExecution
-                                .getWorkflowExecution()
-                                .getId(),
-
-                        taskExecution.getId(),
-
-                        taskExecution
-                                .getTaskNode()
-                                .getId()
-                )
-        );
+        return dispatched;
     }
 
     private void markSkipped(
@@ -177,8 +195,9 @@ public class DistributedWorkflowCoordinator {
     ) {
 
         List<Dependency> dependencies =
-                dependencyRepository
-                        .findByChild_Id(childTaskId);
+                dependencyRepository.findByChild_Id(
+                        childTaskId
+                );
 
         if (dependencies.isEmpty()) {
             return true;
@@ -187,15 +206,14 @@ public class DistributedWorkflowCoordinator {
         for (Dependency dependency : dependencies) {
 
             Long parentId =
-                    dependency
-                            .getParent()
-                            .getId();
+                    dependency.getParent().getId();
 
             TaskExecutionStatus status =
                     statuses.get(parentId);
 
             if (status == null ||
                     !isTerminal(status)) {
+
                 return false;
             }
         }
@@ -229,10 +247,11 @@ public class DistributedWorkflowCoordinator {
 
         boolean allTerminal =
                 executions.stream()
-                        .allMatch(task ->
-                                isTerminal(
-                                        task.getStatus()
-                                )
+                        .allMatch(
+                                task ->
+                                        isTerminal(
+                                                task.getStatus()
+                                        )
                         );
 
         if (!allTerminal) {
@@ -249,8 +268,9 @@ public class DistributedWorkflowCoordinator {
                         .anyMatch(task ->
                                 task.getStatus()
                                         == TaskExecutionStatus.FAILED
-                                        || task.getStatus()
-                                        == TaskExecutionStatus.TIMEOUT
+                                        ||
+                                        task.getStatus()
+                                                == TaskExecutionStatus.TIMEOUT
                         );
 
         workflowExecution.setStatus(

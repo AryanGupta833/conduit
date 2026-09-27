@@ -154,7 +154,11 @@ public class TaskRunnerService {
                         token
                 );
 
-        heartbeat.start();
+        heartbeat.start(
+                20,
+                20,
+                TimeUnit.SECONDS
+        );
 
         /*
          * Idempotency ownership was successfully acquired.

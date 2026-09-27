@@ -15,34 +15,31 @@ public interface TaskExecutionRepository
 
     List<TaskExecution> findByWorkflowExecution_Id(Long id);
 
-    Optional<TaskExecution> findByWorkflowExecution_IdAndTaskNode_Id(
+    Optional<TaskExecution>
+    findByWorkflowExecution_IdAndTaskNode_Id(
             Long workflowExecutionId,
             Long taskId
     );
 
-    @Modifying
-    @Query("""
-            UPDATE TaskExecution t
-            SET t.status = :status
-            WHERE t.id = :taskExecutionId
-            AND t.status = :expectedStatus
-            """)
-    int updateStatusIfCurrent(
-            @Param("taskExecutionId") Long taskExecutionId,
-            @Param("expectedStatus") TaskExecutionStatus expectedStatus,
-            @Param("status") TaskExecutionStatus status
+    List<TaskExecution> findByStatus(
+            TaskExecutionStatus status
     );
 
     @Modifying
     @Query("""
-    UPDATE TaskExecution t
-    SET t.status = :queuedStatus
-    WHERE t.id = :taskExecutionId
-      AND t.status = :pendingStatus
-""")
+        UPDATE TaskExecution t
+        SET t.status = :queuedStatus
+        WHERE t.id = :taskExecutionId
+          AND t.status = :pendingStatus
+    """)
     int claimForQueue(
-            @Param("taskExecutionId") Long taskExecutionId,
-            @Param("pendingStatus") TaskExecutionStatus pendingStatus,
-            @Param("queuedStatus") TaskExecutionStatus queuedStatus
+            @Param("taskExecutionId")
+            Long taskExecutionId,
+
+            @Param("pendingStatus")
+            TaskExecutionStatus pendingStatus,
+
+            @Param("queuedStatus")
+            TaskExecutionStatus queuedStatus
     );
 }

@@ -33,17 +33,25 @@ public class TaskLeaseHeartbeat {
         this.leaseToken = leaseToken;
     }
 
-    public void start() {
+    public void start(
+            long initialDelay,
+            long period,
+            TimeUnit unit) {
 
-        heartbeatTask = scheduler.scheduleAtFixedRate(
-                this::renew,
-                20,
-                20,
-                TimeUnit.SECONDS
-        );
+        heartbeatTask =
+                scheduler.scheduleAtFixedRate(
+                        this::renew,
+                        initialDelay,
+                        period,
+                        unit
+                );
     }
 
     private void renew() {
+
+        if (leaseLost.get()) {
+            return;
+        }
 
         try {
 
@@ -60,6 +68,8 @@ public class TaskLeaseHeartbeat {
                 System.err.println(
                         "LEASE LOST: " + idempotencyKey
                 );
+
+                stopHeartbeat();
             }
 
         } catch (Exception e) {
@@ -72,6 +82,8 @@ public class TaskLeaseHeartbeat {
             );
 
             e.printStackTrace();
+
+            stopHeartbeat();
         }
     }
 
@@ -81,10 +93,15 @@ public class TaskLeaseHeartbeat {
 
     public void stop() {
 
+        stopHeartbeat();
+
+        scheduler.shutdownNow();
+    }
+
+    private void stopHeartbeat() {
+
         if (heartbeatTask != null) {
             heartbeatTask.cancel(false);
         }
-
-        scheduler.shutdownNow();
     }
 }
