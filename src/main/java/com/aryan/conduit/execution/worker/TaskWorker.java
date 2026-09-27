@@ -119,18 +119,5 @@ public class TaskWorker {
             );
         }
     }
-    @Scheduled(fixedDelay = 10000)
-    public void recoverPendingTasks() {
 
-        List<StreamMessage> messages =
-                taskQueueService.recover(
-                        consumerName,
-                        Duration.ofSeconds(30),
-                        10
-                );
-
-        for (StreamMessage message : messages) {
-            process(message);
-        }
-    }
 }
