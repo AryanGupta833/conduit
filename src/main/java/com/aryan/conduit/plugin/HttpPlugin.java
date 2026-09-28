@@ -35,8 +35,16 @@ public class HttpPlugin implements WorkflowPlugin {
                     objectMapper.readTree(
                             task.getConfigurationJson());
 
-            String url =
-                    config.get("url").asText();
+            JsonNode urlNode = config.get("url");
+
+            if (urlNode == null || urlNode.isNull() || urlNode.asText().isBlank()) {
+                return PluginResult.builder()
+                        .success(false)
+                        .output("HTTP plugin requires a non-empty 'url' configuration")
+                        .build();
+            }
+
+            String url = urlNode.asText();
 
             String method =
                     config.has("method")

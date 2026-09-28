@@ -14,13 +14,10 @@ public class RedisConfig {
     public RedisTemplate<String, Object> taskRedisTemplate(
             RedisConnectionFactory connectionFactory
     ) {
-
         RedisTemplate<String, Object> template =
                 new RedisTemplate<>();
 
-        template.setConnectionFactory(
-                connectionFactory
-        );
+        template.setConnectionFactory(connectionFactory);
 
         StringRedisSerializer stringSerializer =
                 new StringRedisSerializer();
@@ -28,21 +25,10 @@ public class RedisConfig {
         GenericJackson2JsonRedisSerializer jsonSerializer =
                 new GenericJackson2JsonRedisSerializer();
 
-        template.setKeySerializer(
-                stringSerializer
-        );
-
-        template.setValueSerializer(
-                jsonSerializer
-        );
-
-        template.setHashKeySerializer(
-                stringSerializer
-        );
-
-        template.setHashValueSerializer(
-                jsonSerializer
-        );
+        template.setKeySerializer(stringSerializer);
+        template.setValueSerializer(jsonSerializer);
+        template.setHashKeySerializer(stringSerializer);
+        template.setHashValueSerializer(jsonSerializer);
 
         template.afterPropertiesSet();
 

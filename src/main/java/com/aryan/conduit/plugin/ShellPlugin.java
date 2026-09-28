@@ -1,10 +1,9 @@
 package com.aryan.conduit.plugin;
 
+import com.aryan.conduit.workflow.entity.TaskNode;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.aryan.conduit.plugin.PluginResult;
-import com.aryan.conduit.plugin.WorkflowPlugin;
-import com.aryan.conduit.workflow.entity.TaskNode;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import java.io.BufferedReader;
@@ -14,8 +13,7 @@ import java.util.Map;
 @Component
 public class ShellPlugin implements WorkflowPlugin {
 
-    private final ObjectMapper objectMapper =
-            new ObjectMapper();
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Override
     public String getType() {
@@ -23,26 +21,51 @@ public class ShellPlugin implements WorkflowPlugin {
     }
 
     @Override
-    public PluginResult execute(TaskNode task,
-                                Map<String, Object> variables) {
-
+    public PluginResult execute(
+            TaskNode task,
+            Map<String, Object> variables
+    ) {
         try {
 
             JsonNode config =
-                    objectMapper.readTree(
-                            task.getConfigurationJson());
+                    objectMapper.readTree(task.getConfigurationJson());
 
-            String command =
-                    config.get("command").asText();
+            String command = config.get("command").asText();
 
-            Process process =
-                    Runtime.getRuntime()
-                            .exec(command);
+            ProcessBuilder processBuilder;
+
+            String os =
+                    System.getProperty("os.name").toLowerCase();
+
+            if (os.contains("win")) {
+
+                // Windows
+                processBuilder = new ProcessBuilder(
+                        "cmd.exe",
+                        "/c",
+                        command
+                );
+
+            } else {
+
+                // Linux / macOS
+                processBuilder = new ProcessBuilder(
+                        "sh",
+                        "-c",
+                        command
+                );
+            }
+
+            processBuilder.redirectErrorStream(true);
+
+            Process process = processBuilder.start();
 
             BufferedReader reader =
                     new BufferedReader(
                             new InputStreamReader(
-                                    process.getInputStream()));
+                                    process.getInputStream()
+                            )
+                    );
 
             StringBuilder output =
                     new StringBuilder();
@@ -50,15 +73,20 @@ public class ShellPlugin implements WorkflowPlugin {
             String line;
 
             while ((line = reader.readLine()) != null) {
-                output.append(line)
-                        .append("\n");
+                output.append(line).append("\n");
             }
 
-            process.waitFor();
+            int exitCode = process.waitFor();
 
             return PluginResult.builder()
-                    .success(true)
+                    .success(exitCode == 0)
                     .output(output.toString())
+                    .metadata(
+                            Map.of(
+                                    "exitCode", exitCode,
+                                    "command", command
+                            )
+                    )
                     .build();
 
         } catch (Exception ex) {

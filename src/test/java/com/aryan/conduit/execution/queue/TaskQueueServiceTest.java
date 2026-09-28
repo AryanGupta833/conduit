@@ -8,7 +8,6 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.redis.connection.stream.Consumer;
 import org.springframework.data.redis.connection.stream.MapRecord;
 import org.springframework.data.redis.connection.stream.ReadOffset;
-import org.springframework.data.redis.connection.stream.Record;
 import org.springframework.data.redis.connection.stream.RecordId;
 import org.springframework.data.redis.connection.stream.StreamOffset;
 import org.springframework.data.redis.core.RedisTemplate;
@@ -18,7 +17,6 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
@@ -61,7 +59,24 @@ class TaskQueueServiceTest {
                 .opsForStream();
 
         verify(streamOperations)
-                .add(any(Record.class));
+                .add(
+                        argThat(record -> {
+                            Object payload =
+                                    record.getValue()
+                                            .get("payload");
+
+                            return payload != null
+                                    && payload.toString().contains(
+                                    "\"workflowExecutionId\":100"
+                            )
+                                    && payload.toString().contains(
+                                    "\"taskExecutionId\":1010"
+                            )
+                                    && payload.toString().contains(
+                                    "\"taskNodeId\":10"
+                            );
+                        })
+                );
     }
 
     @Test
@@ -87,11 +102,20 @@ class TaskQueueServiceTest {
         when(streamRecord.getId())
                 .thenReturn(recordId);
 
+        /*
+         * Redis now stores the TaskMessage as JSON
+         * under the "payload" field.
+         */
+        String jsonPayload =
+                """
+                {"workflowExecutionId":100,"taskExecutionId":1010,"taskNodeId":10}
+                """;
+
         when(streamRecord.getValue())
                 .thenReturn(
                         Map.of(
-                                "value",
-                                message
+                                "payload",
+                                jsonPayload
                         )
                 );
 
