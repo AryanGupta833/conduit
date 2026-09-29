@@ -9,6 +9,7 @@ import com.aryan.conduit.execution.queue.TaskResult;
 import com.aryan.conduit.execution.queue.TaskResultHandler;
 import com.aryan.conduit.execution.repository.TaskExecutionRepository;
 import com.aryan.conduit.execution.service.TaskRunnerService;
+import com.aryan.conduit.observability.ConduitMetrics;
 import lombok.RequiredArgsConstructor;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -25,6 +26,7 @@ public class TaskWorker {
     private final TaskExecutionRepository taskExecutionRepository;
     private final TaskRunnerService taskRunnerService;
     private final TaskResultHandler taskResultHandler;
+    private final ConduitMetrics metrics;
 
     private final String consumerName =
             "worker-" + UUID.randomUUID();
@@ -48,6 +50,9 @@ public class TaskWorker {
     public void process(
             StreamMessage streamMessage
     ) {
+
+        metrics.workerStarted();
+        String outcome = "failed";
 
         TaskMessage message =
                 streamMessage.taskMessage();
@@ -93,6 +98,7 @@ public class TaskWorker {
             taskQueueService.acknowledge(
                     streamMessage.recordId()
             );
+            outcome = "success";
 
         } catch (Exception e) {
 
@@ -117,6 +123,8 @@ public class TaskWorker {
             taskQueueService.acknowledge(
                     streamMessage.recordId()
             );
+        } finally {
+            metrics.workerFinished(outcome);
         }
     }
 

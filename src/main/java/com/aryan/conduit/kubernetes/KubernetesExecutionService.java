@@ -2,6 +2,7 @@ package com.aryan.conduit.kubernetes;
 
 import com.aryan.conduit.execution.TaskExecutionBackend;
 import com.aryan.conduit.execution.TaskExecutionResult;
+import com.aryan.conduit.observability.ConduitMetrics;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Value;
@@ -17,16 +18,31 @@ public class KubernetesExecutionService implements TaskExecutionBackend {
     private final KubectlCommandRunner runner;
     private final ObjectMapper mapper;
     private final String namespace;
+    private final ConduitMetrics metrics;
 
     public KubernetesExecutionService(KubectlCommandRunner runner, ObjectMapper mapper,
-                                      @Value("${conduit.kubernetes.namespace:default}") String namespace) {
+                                      @Value("${conduit.kubernetes.namespace:default}") String namespace,
+                                      ConduitMetrics metrics) {
         this.runner = runner;
         this.mapper = mapper;
         this.namespace = namespace;
+        this.metrics = metrics;
     }
 
     @Override
     public TaskExecutionResult execute(String image, List<String> command, Duration timeout) {
+        long started = System.nanoTime();
+        String status = "failed";
+        try {
+            TaskExecutionResult result = executeInternal(image, command, timeout);
+            status = result.timedOut() ? "timeout" : result.exitCode() == 0 ? "success" : "failed";
+            return result;
+        } finally {
+            metrics.backendFinished("kubernetes", status, System.nanoTime() - started);
+        }
+    }
+
+    private TaskExecutionResult executeInternal(String image, List<String> command, Duration timeout) {
         String jobName = "conduit-task-" + UUID.randomUUID().toString().replace("-", "").substring(0, 20);
         long deadline = System.nanoTime() + timeout.toNanos();
         try {

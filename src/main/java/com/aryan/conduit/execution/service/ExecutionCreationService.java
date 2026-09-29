@@ -5,6 +5,7 @@ import com.aryan.conduit.execution.entity.*;
 import com.aryan.conduit.execution.repository.ExecutionContextRepository;
 import com.aryan.conduit.execution.repository.TaskExecutionRepository;
 import com.aryan.conduit.execution.repository.WorkflowExecutionRepository;
+import com.aryan.conduit.observability.ConduitMetrics;
 import com.aryan.conduit.workflow.dto.ExecutionContext;
 import com.aryan.conduit.workflow.entity.TaskNode;
 import com.aryan.conduit.workflow.entity.Workflow;
@@ -33,6 +34,7 @@ public class ExecutionCreationService {
     private final WorkflowGraphService workflowGraphService;
     private final ExecutionContextRepository executionContextRepository;
     private final WorkflowVersionRepository workflowVersionRepository;
+    private final ConduitMetrics metrics;
 
     @Transactional
     public ExecutionContext createExecution(Long workflowId){
@@ -54,6 +56,7 @@ public class ExecutionCreationService {
                 .startedAt(LocalDateTime.now()).build();
 
         workflowExecution=workflowExecutionRepository.save(workflowExecution);
+        metrics.workflowStarted();
         com.aryan.conduit.execution.entity.ExecutionContextEntity executionContext = ExecutionContextEntity
                 .builder().workflowExecution(workflowExecution).variableJson("{}").build();
 

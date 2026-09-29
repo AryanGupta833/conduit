@@ -2,6 +2,8 @@ package com.aryan.conduit.kubernetes;
 
 import com.aryan.conduit.execution.TaskExecutionResult;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.aryan.conduit.observability.ConduitMetrics;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
@@ -12,10 +14,11 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class KubernetesExecutionServiceTest {
     private final ObjectMapper mapper = new ObjectMapper();
+    private final ConduitMetrics metrics = new ConduitMetrics(new SimpleMeterRegistry());
 
     @Test
     void manifestContainsJobImageCommandAndLimits() {
-        KubernetesExecutionService service = new KubernetesExecutionService((c, i, t) -> null, mapper, "default");
+        KubernetesExecutionService service = new KubernetesExecutionService((c, i, t) -> null, mapper, "default", metrics);
         var manifest = service.jobManifest("conduit-task-id", "alpine:latest", List.of("sh", "-c", "echo hi"));
         var root = mapper.valueToTree(manifest);
         assertEquals("Job", root.path("kind").asText());
@@ -39,7 +42,7 @@ class KubernetesExecutionServiceTest {
             if (command.contains("delete")) { deletes.incrementAndGet(); return result(0, "", ""); }
             return result(1, "", "unexpected");
         };
-        TaskExecutionResult result = new KubernetesExecutionService(runner, mapper, "default")
+        TaskExecutionResult result = new KubernetesExecutionService(runner, mapper, "default", metrics)
                 .execute("alpine:latest", List.of("sh", "-c", "echo hi"), Duration.ofSeconds(2));
         assertTrue(result.isSuccess());
         assertEquals("hello\n", result.stdout());
@@ -54,7 +57,7 @@ class KubernetesExecutionServiceTest {
             if (command.contains("logs")) return result(0, "bad\n", "");
             return result(0, "", "");
         };
-        TaskExecutionResult result = new KubernetesExecutionService(runner, mapper, "default")
+        TaskExecutionResult result = new KubernetesExecutionService(runner, mapper, "default", metrics)
                 .execute("alpine:latest", List.of("sh", "-c", "exit 1"), Duration.ofSeconds(2));
         assertFalse(result.isSuccess());
         assertEquals(1, result.exitCode());
@@ -69,7 +72,7 @@ class KubernetesExecutionServiceTest {
             if (command.contains("delete")) deletes.incrementAndGet();
             return result(0, "", "");
         };
-        TaskExecutionResult result = new KubernetesExecutionService(runner, mapper, "default")
+        TaskExecutionResult result = new KubernetesExecutionService(runner, mapper, "default", metrics)
                 .execute("alpine:latest", List.of("sh", "-c", "sleep 99"), Duration.ofMillis(100));
         assertTrue(result.timedOut());
         assertFalse(result.isSuccess());

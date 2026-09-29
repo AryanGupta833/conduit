@@ -12,6 +12,7 @@ import com.aryan.conduit.execution.retry.TaskTimeoutException;
 import com.aryan.conduit.plugin.PluginManager;
 import com.aryan.conduit.plugin.PluginResult;
 import com.aryan.conduit.plugin.WorkflowPlugin;
+import com.aryan.conduit.observability.ConduitMetrics;
 import com.aryan.conduit.workflow.dto.TaskFuture;
 import com.aryan.conduit.workflow.entity.TaskNode;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -43,6 +44,7 @@ public class TaskRunnerService {
     private final IdempotencyService idempotencyService;
     private final ObjectMapper objectMapper;
     private final ConfigurationResolver configurationResolver;
+    private final ConduitMetrics metrics;
 
 
     private Map<String, Object> executeTask(Long taskExecutionId)
@@ -552,6 +554,42 @@ public class TaskRunnerService {
             Integer timeoutSeconds)
             throws InterruptedException {
 
+        long started = System.nanoTime();
+        String status = "success";
+        String pluginType = metricPluginType(taskExecutionId);
+        try {
+            return executeWithRetryInternal(taskExecutionId, maxRetries, timeoutSeconds, pluginType);
+        } catch (TaskTimeoutException e) {
+            status = "timeout";
+            throw e;
+        } catch (InterruptedException e) {
+            status = "cancelled";
+            throw e;
+        } catch (RuntimeException e) {
+            status = "failed";
+            throw e;
+        } finally {
+            metrics.taskFinished(pluginType, status, System.nanoTime() - started);
+        }
+    }
+
+    private String metricPluginType(Long taskExecutionId) {
+        try {
+            return taskExecutionRepository.findById(taskExecutionId)
+                    .map(task -> task.getTaskNode() == null ? "unknown" : task.getTaskNode().getPluginType())
+                    .orElse("unknown");
+        } catch (RuntimeException ignored) {
+            return "unknown";
+        }
+    }
+
+    private Map<String,Object> executeWithRetryInternal(
+            Long taskExecutionId,
+            Integer maxRetries,
+            Integer timeoutSeconds,
+            String pluginType)
+            throws InterruptedException {
+
         RetryPolicy policy =
                 retryPolicyFactory.defaultPolicy(
                         maxRetries
@@ -664,6 +702,8 @@ public class TaskRunnerService {
                         taskExecutionId
                 );
 
+                metrics.taskRetry(pluginType);
+
                 Thread.sleep(delay);
 
             } catch (InterruptedException e) {
@@ -720,6 +760,8 @@ public class TaskRunnerService {
                 taskExecutionService.markRetrying(
                         taskExecutionId
                 );
+
+                metrics.taskRetry(pluginType);
 
                 Thread.sleep(delay);
             }

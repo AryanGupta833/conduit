@@ -9,6 +9,8 @@ import com.aryan.conduit.plugin.PluginManager;
 import com.aryan.conduit.plugin.PluginResult;
 import com.aryan.conduit.plugin.WorkflowPlugin;
 import com.aryan.conduit.workflow.entity.TaskNode;
+import com.aryan.conduit.observability.ConduitMetrics;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -94,7 +96,8 @@ class TaskRunnerServiceConfigurationTest {
                         retryPolicyFactory,
                         idempotencyService,
                         objectMapper,
-                        configurationResolver
+                        configurationResolver,
+                        new ConduitMetrics(new SimpleMeterRegistry())
                 );
     }
 

@@ -9,6 +9,8 @@ import com.aryan.conduit.execution.queue.TaskResult;
 import com.aryan.conduit.execution.queue.TaskResultHandler;
 import com.aryan.conduit.execution.repository.TaskExecutionRepository;
 import com.aryan.conduit.execution.service.TaskRunnerService;
+import com.aryan.conduit.observability.ConduitMetrics;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import com.aryan.conduit.workflow.entity.TaskNode;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -50,7 +52,8 @@ class TaskWorkerTest {
                         taskQueueService,
                         taskExecutionRepository,
                         taskRunnerService,
-                        taskResultHandler
+                        taskResultHandler,
+                        new ConduitMetrics(new SimpleMeterRegistry())
                 );
     }
 

@@ -21,6 +21,9 @@ public class TaskLeaseHeartbeat {
     private final AtomicBoolean leaseLost =
             new AtomicBoolean(false);
 
+    private final AtomicBoolean stopped =
+            new AtomicBoolean(false);
+
     private ScheduledFuture<?> heartbeatTask;
 
     public TaskLeaseHeartbeat(
@@ -49,7 +52,7 @@ public class TaskLeaseHeartbeat {
 
     private void renew() {
 
-        if (leaseLost.get()) {
+        if (leaseLost.get() || stopped.get()) {
             return;
         }
 
@@ -92,6 +95,8 @@ public class TaskLeaseHeartbeat {
     }
 
     public void stop() {
+
+        stopped.set(true);
 
         stopHeartbeat();
 

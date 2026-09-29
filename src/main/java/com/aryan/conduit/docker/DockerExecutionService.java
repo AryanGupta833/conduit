@@ -2,6 +2,7 @@ package com.aryan.conduit.docker;
 
 import com.aryan.conduit.execution.TaskExecutionBackend;
 import com.aryan.conduit.execution.TaskExecutionResult;
+import com.aryan.conduit.observability.ConduitMetrics;
 import org.springframework.stereotype.Service;
 
 import java.io.BufferedReader;
@@ -15,12 +16,27 @@ import java.util.concurrent.TimeUnit;
 
 @Service
 public class DockerExecutionService implements TaskExecutionBackend {
+    private final ConduitMetrics metrics;
+
+    public DockerExecutionService(ConduitMetrics metrics) { this.metrics = metrics; }
 
     public TaskExecutionResult execute(
             String image,
             List<String> command,
             Duration timeout
     ) {
+        long started = System.nanoTime();
+        String status = "failed";
+        try {
+            TaskExecutionResult result = executeInternal(image, command, timeout);
+            status = result.timedOut() ? "timeout" : result.exitCode() == 0 ? "success" : "failed";
+            return result;
+        } finally {
+            metrics.backendFinished("docker", status, System.nanoTime() - started);
+        }
+    }
+
+    private TaskExecutionResult executeInternal(String image, List<String> command, Duration timeout) {
         String containerName =
                 "conduit-task-" + UUID.randomUUID();
 

@@ -1,5 +1,6 @@
 package com.aryan.conduit.execution.service;
 
+import com.aryan.conduit.observability.ConduitMetrics;
 import com.aryan.conduit.execution.entity.TaskExecution;
 import com.aryan.conduit.execution.entity.TaskExecutionStatus;
 import com.aryan.conduit.execution.entity.WorkflowExecution;
@@ -15,6 +16,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -22,6 +24,7 @@ import java.util.Map;
 @Service
 @RequiredArgsConstructor
 public class DistributedWorkflowCoordinator {
+    private final ConduitMetrics metrics;
 
     private final TaskExecutionRepository taskExecutionRepository;
     private final WorkflowExecutionRepository workflowExecutionRepository;
@@ -263,6 +266,7 @@ public class DistributedWorkflowCoordinator {
                 workflowExecutionRepository
                         .findById(workflowExecutionId)
                         .orElseThrow();
+        boolean wasRunning = workflowExecution.getStatus() == WorkflowExecutionStatus.RUNNING;
 
         boolean failed =
                 executions.stream()
@@ -284,5 +288,10 @@ public class DistributedWorkflowCoordinator {
         workflowExecutionRepository.save(
                 workflowExecution
         );
+        if (wasRunning) {
+            long duration = workflowExecution.getStartedAt() == null ? 0L
+                    : Duration.between(workflowExecution.getStartedAt(), workflowExecution.getFinishedAt()).toNanos();
+            metrics.workflowFinished(workflowExecution.getStatus().name(), duration);
+        }
     }
 }

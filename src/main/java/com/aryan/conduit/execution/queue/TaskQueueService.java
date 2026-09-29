@@ -158,6 +158,17 @@ public class TaskQueueService {
                 );
     }
 
+    public long streamEntryCount() {
+        Long size = taskRedisTemplate.opsForStream().size(TASK_STREAM);
+        return size == null ? 0 : size;
+    }
+
+    public long pendingCount() {
+        if (!ensureConsumerGroup()) return 0;
+        var pending = taskRedisTemplate.opsForStream().pending(TASK_STREAM, CONSUMER_GROUP);
+        return pending == null ? 0 : pending.getTotalPendingMessages();
+    }
+
     private boolean ensureConsumerGroup() {
 
         Boolean exists =

@@ -7,6 +7,7 @@ import com.aryan.conduit.execution.entity.WorkflowExecution;
 import com.aryan.conduit.execution.entity.WorkflowExecutionStatus;
 import com.aryan.conduit.execution.repository.TaskExecutionRepository;
 import com.aryan.conduit.execution.repository.WorkflowExecutionRepository;
+import com.aryan.conduit.observability.ConduitMetrics;
 import com.aryan.conduit.workflow.entity.Dependency;
 import com.aryan.conduit.workflow.entity.TaskNode;
 import com.aryan.conduit.workflow.entity.WorkflowVersion;
@@ -51,6 +52,9 @@ class DistributedWorkflowCoordinatorTest {
 
     @Mock
     private TaskDispatchService taskDispatchService;
+
+    @Mock
+    private ConduitMetrics metrics;
 
     @InjectMocks
     private DistributedWorkflowCoordinator coordinator;
