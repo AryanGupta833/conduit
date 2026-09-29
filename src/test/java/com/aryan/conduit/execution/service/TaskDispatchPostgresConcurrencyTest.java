@@ -8,7 +8,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.transaction.support.TransactionTemplate;
-
+import com.aryan.conduit.execution.repository.ExecutionLogRepository;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
@@ -27,8 +27,12 @@ class TaskDispatchPostgresConcurrencyTest {
     @Autowired
     private TransactionTemplate transactionTemplate;
 
+    @Autowired
+    private ExecutionLogRepository executionLogRepository;
+
     @BeforeEach
     void setUp() {
+        executionLogRepository.deleteAll();
         taskExecutionRepository.deleteAll();
     }
 
