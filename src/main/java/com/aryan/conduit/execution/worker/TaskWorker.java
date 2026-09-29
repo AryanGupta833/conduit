@@ -8,9 +8,12 @@ import com.aryan.conduit.execution.queue.TaskQueueService;
 import com.aryan.conduit.execution.queue.TaskResult;
 import com.aryan.conduit.execution.queue.TaskResultHandler;
 import com.aryan.conduit.execution.repository.TaskExecutionRepository;
+import com.aryan.conduit.execution.retry.TaskAlreadyInProgressException;
 import com.aryan.conduit.execution.service.TaskRunnerService;
 import com.aryan.conduit.observability.ConduitMetrics;
 import lombok.RequiredArgsConstructor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
@@ -21,6 +24,8 @@ import java.util.UUID;
 @Service
 @RequiredArgsConstructor
 public class TaskWorker {
+
+    private static final Logger log = LoggerFactory.getLogger(TaskWorker.class);
 
     private final TaskQueueService taskQueueService;
     private final TaskExecutionRepository taskExecutionRepository;
@@ -53,6 +58,7 @@ public class TaskWorker {
 
         metrics.workerStarted();
         String outcome = "failed";
+        boolean acknowledge = false;
 
         TaskMessage message =
                 streamMessage.taskMessage();
@@ -66,66 +72,59 @@ public class TaskWorker {
                             )
                             .orElseThrow();
 
-            taskExecution.setStatus(
-                    TaskExecutionStatus.RUNNING
-            );
+            if (isTerminal(taskExecution.getStatus())) {
+                outcome = "duplicate";
+                acknowledge = true;
+            } else {
+                taskExecution.setStatus(TaskExecutionStatus.RUNNING);
+                taskExecutionRepository.save(taskExecution);
 
-            taskExecutionRepository.save(
-                    taskExecution
-            );
+                taskRunnerService.executeWithRetry(
+                        taskExecution.getId(),
+                        taskExecution.getTaskNode().getMaxRetries(),
+                        taskExecution.getTaskNode().getTimeoutSeconds()
+                );
 
-            taskRunnerService.executeWithRetry(
-                    taskExecution.getId(),
-                    taskExecution
-                            .getTaskNode()
-                            .getMaxRetries(),
-                    taskExecution
-                            .getTaskNode()
-                            .getTimeoutSeconds()
-            );
+                taskResultHandler.handle(new TaskResult(
+                        message.workflowExecutionId(),
+                        message.taskExecutionId(),
+                        message.taskNodeId(),
+                        true,
+                        false,
+                        null
+                ));
+                outcome = "success";
+                acknowledge = true;
+            }
 
-            taskResultHandler.handle(
-                    new TaskResult(
-                            message.workflowExecutionId(),
-                            message.taskExecutionId(),
-                            message.taskNodeId(),
-                            true,
-                            false,
-                            null
-                    )
-            );
-
-            taskQueueService.acknowledge(
-                    streamMessage.recordId()
-            );
-            outcome = "success";
-
+        } catch (TaskAlreadyInProgressException e) {
+            log.debug("Deferring duplicate task delivery while its lease is active: {}", message.taskExecutionId());
+            outcome = "deferred";
         } catch (Exception e) {
-
-            taskResultHandler.handle(
-                    new TaskResult(
-                            message.workflowExecutionId(),
-                            message.taskExecutionId(),
-                            message.taskNodeId(),
-                            false,
-                            false,
-                            e.getMessage()
-                    )
-            );
-
-            /*
-             * We ACK here because TaskResultHandler has
-             * transitioned the task to FAILED.
-             *
-             * Actual retry/recovery of abandoned messages
-             * will be implemented separately.
-             */
-            taskQueueService.acknowledge(
-                    streamMessage.recordId()
-            );
+            log.error("Task processing failed for task execution {}", message.taskExecutionId(), e);
+            taskResultHandler.handle(new TaskResult(
+                    message.workflowExecutionId(),
+                    message.taskExecutionId(),
+                    message.taskNodeId(),
+                    false,
+                    false,
+                    e.getMessage()
+            ));
+            acknowledge = true;
         } finally {
-            metrics.workerFinished(outcome);
+            try {
+                if (acknowledge) taskQueueService.acknowledge(streamMessage.recordId());
+            } finally {
+                metrics.workerFinished(outcome);
+            }
         }
+    }
+
+    private boolean isTerminal(TaskExecutionStatus status) {
+        return status == TaskExecutionStatus.SUCCESS
+                || status == TaskExecutionStatus.FAILED
+                || status == TaskExecutionStatus.TIMEOUT
+                || status == TaskExecutionStatus.SKIPPED;
     }
 
 }

@@ -4,8 +4,6 @@ import com.aryan.conduit.execution.entity.TaskExecution;
 import com.aryan.conduit.execution.entity.TaskExecutionStatus;
 import com.aryan.conduit.execution.entity.WorkflowExecution;
 import com.aryan.conduit.execution.entity.WorkflowExecutionStatus;
-import com.aryan.conduit.execution.queue.TaskMessage;
-import com.aryan.conduit.execution.queue.TaskQueueService;
 import com.aryan.conduit.execution.repository.TaskExecutionRepository;
 import com.aryan.conduit.execution.repository.WorkflowExecutionRepository;
 import com.aryan.conduit.execution.service.ExecutionRuntimeService;
@@ -15,10 +13,11 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
-import java.util.Map;
+import lombok.extern.slf4j.Slf4j;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class RuntimeWorkflowExecutor {
 
     private final ExecutionRuntimeService executionRuntimeService;
@@ -26,37 +25,9 @@ public class RuntimeWorkflowExecutor {
     private final WorkflowExecutionRepository workflowExecutionRepository;
     private final TaskDispatchService taskDispatchService;
 
-    public void simulate(Long workflowVersionId) {
-
-        RuntimeExecutionContext context =
-                executionRuntimeService.initializeContext(workflowVersionId);
-
-        while (!context.getReadyQueue().isEmpty()) {
-
-            Long taskId =
-                    context.getReadyQueue().poll();
-
-            System.out.println("Executing " + taskId);
-
-            System.out.println(
-                    "Finished task " + taskId +
-                            " evaluating children"
-            );
-
-            executionRuntimeService.evaluateChildren(
-                    workflowVersionId,
-                    taskId,
-                    context
-            );
-        }
-    }
-
     public void execute(Long workflowExecutionId) {
 
-        System.out.println(
-                "RuntimeWorkflowExecutor started "
-                        + workflowExecutionId
-        );
+        log.debug("Dispatching tasks for workflow execution {}", workflowExecutionId);
 
         WorkflowExecution workflowExecution =
                 workflowExecutionRepository
@@ -92,11 +63,7 @@ public class RuntimeWorkflowExecutor {
                             == WorkflowExecutionStatus.PAUSED
             ) {
 
-                System.out.println(
-                        "Workflow "
-                                + workflowExecutionId
-                                + " is paused"
-                );
+                log.debug("Workflow execution {} is paused", workflowExecutionId);
 
                 return;
             }
@@ -106,11 +73,7 @@ public class RuntimeWorkflowExecutor {
                             == WorkflowExecutionStatus.CANCELLED
             ) {
 
-                System.out.println(
-                        "Workflow "
-                                + workflowExecutionId
-                                + " cancelled"
-                );
+                log.debug("Workflow execution {} was cancelled", workflowExecutionId);
 
                 markRemainingTasksSkipped(
                         workflowExecutionId
@@ -126,9 +89,7 @@ public class RuntimeWorkflowExecutor {
                 break;
             }
 
-            System.out.println(
-                    "Dequeued task " + taskId
-            );
+            log.debug("Dispatching task node {} for workflow execution {}", taskId, workflowExecutionId);
 
             TaskExecution taskExecution =
                     taskExecutionRepository
@@ -152,11 +113,7 @@ public class RuntimeWorkflowExecutor {
                         context
                 );
 
-                System.out.println(
-                        "Task "
-                                + taskId
-                                + " is SKIPPED"
-                );
+                log.debug("Task node {} is skipped", taskId);
 
                 continue;
             }
@@ -169,11 +126,7 @@ public class RuntimeWorkflowExecutor {
                     taskExecution
             );
 
-            System.out.println(
-                    "Task "
-                            + taskId
-                            + " queued for execution"
-            );
+            log.debug("Task node {} queued for execution", taskId);
 
             /*
              * IMPORTANT:
@@ -196,10 +149,7 @@ public class RuntimeWorkflowExecutor {
          *
          * Their results will arrive asynchronously.
          */
-        System.out.println(
-                "Finished dispatching tasks for workflow "
-                        + workflowExecutionId
-        );
+        log.debug("Finished dispatching tasks for workflow execution {}", workflowExecutionId);
     }
 
     private void persistSkippedTask(
@@ -220,13 +170,7 @@ public class RuntimeWorkflowExecutor {
                     taskExecution
             );
 
-            System.out.println(
-                    "Persisted task "
-                            + taskExecution
-                            .getTaskNode()
-                            .getId()
-                            + " as SKIPPED"
-            );
+            log.debug("Persisted task {} as skipped", taskExecution.getTaskNode().getId());
         }
 
         context.getTaskStatuses().put(
@@ -262,11 +206,7 @@ public class RuntimeWorkflowExecutor {
                         task
                 );
 
-                System.out.println(
-                        "Marked task "
-                                + task.getTaskNode().getId()
-                                + " as SKIPPED"
-                );
+                log.debug("Marked task {} as skipped", task.getTaskNode().getId());
             }
         }
     }

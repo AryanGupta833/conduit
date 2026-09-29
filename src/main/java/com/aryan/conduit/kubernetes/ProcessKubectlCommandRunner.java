@@ -35,6 +35,10 @@ class ProcessKubectlCommandRunner implements KubectlCommandRunner {
             outReader.join();
             errReader.join();
             return new CommandResult(process.exitValue(), stdout.toString(), stderr.toString(), false);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            if (process != null) process.destroyForcibly();
+            throw new IllegalStateException("kubectl command was interrupted", e);
         } catch (Exception e) {
             if (process != null) process.destroyForcibly();
             throw new IllegalStateException("kubectl command failed to start or complete", e);

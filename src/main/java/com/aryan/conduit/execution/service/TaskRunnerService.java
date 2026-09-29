@@ -3,25 +3,25 @@ package com.aryan.conduit.execution.service;
 
 import com.aryan.conduit.execution.entity.*;
 import com.aryan.conduit.execution.repository.TaskExecutionRepository;
-import com.aryan.conduit.execution.repository.WorkflowExecutionRepository;
 import com.aryan.conduit.execution.retry.RetryPolicy;
 import com.aryan.conduit.execution.retry.RetryPolicyFactory;
 import com.aryan.conduit.execution.retry.TaskLeaseHeartbeat;
 import com.aryan.conduit.execution.retry.TaskLeaseLostException;
+import com.aryan.conduit.execution.retry.TaskAlreadyInProgressException;
 import com.aryan.conduit.execution.retry.TaskTimeoutException;
 import com.aryan.conduit.plugin.PluginManager;
-import com.aryan.conduit.plugin.PluginResult;
-import com.aryan.conduit.plugin.WorkflowPlugin;
+import com.aryan.conduit.plugin.sdk.PluginConfigurationException;
+import com.aryan.conduit.plugin.sdk.PluginContext;
+import com.aryan.conduit.plugin.sdk.PluginResult;
+import com.aryan.conduit.plugin.sdk.WorkflowPlugin;
 import com.aryan.conduit.observability.ConduitMetrics;
-import com.aryan.conduit.workflow.dto.TaskFuture;
 import com.aryan.conduit.workflow.entity.TaskNode;
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
-import java.time.LocalDateTime;
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -34,17 +34,16 @@ import java.util.concurrent.*;
 public class TaskRunnerService {
 
     private final TaskExecutionRepository taskExecutionRepository;
-    private final WorkflowExecutionRepository workflowExecutionRepository;
     private final TaskExecutionService taskExecutionService;
     private final ExecutionLogService executionLogService;
     private final TaskOutputService taskOutputService;
-    private final CircuitBreakerTaskService circuitBreakerTaskService;
     private final PluginManager pluginManager;
     private final RetryPolicyFactory retryPolicyFactory;
     private final IdempotencyService idempotencyService;
     private final ObjectMapper objectMapper;
     private final ConfigurationResolver configurationResolver;
     private final ConduitMetrics metrics;
+    private final ExpressionContextService expressionContextService;
 
 
     private Map<String, Object> executeTask(Long taskExecutionId)
@@ -133,10 +132,7 @@ public class TaskRunnerService {
             /*
              * Another worker currently owns the task.
              */
-            throw new IllegalStateException(
-                    "Task is already being executed: "
-                            + idempotencyKey
-            );
+            throw new TaskAlreadyInProgressException(idempotencyKey);
         }
 
         /*
@@ -200,14 +196,25 @@ public class TaskRunnerService {
                             resolvedConfiguration
                     );
 
-            Map<String, Object> variables =
-                    new HashMap<>();
+            Map<String, Object> pluginConfiguration = parsePluginConfiguration(
+                    pluginType, resolvedConfiguration);
+            try {
+                plugin.validateConfiguration(pluginConfiguration);
+            } catch (PluginConfigurationException e) {
+                throw new IllegalArgumentException("Invalid configuration for plugin '" + pluginType + "': " + e.getMessage(), e);
+            }
 
-            PluginResult result =
-                    plugin.execute(
-                            runtimeTaskNode,
-                            variables
-                    );
+            Map<String, Object> variables = expressionContextService.buildContext(
+                    taskExecution.getWorkflowExecution().getId());
+            PluginContext pluginContext = new PluginContext(
+                    runtimeTaskNode.getName(), runtimeTaskNode.getTimeoutSeconds(), pluginConfiguration, variables);
+            PluginResult result = plugin.execute(pluginContext);
+            if (Thread.currentThread().isInterrupted()) {
+                throw new InterruptedException("Plugin execution was interrupted");
+            }
+            if (result == null) {
+                throw new IllegalStateException("Plugin '" + pluginType + "' returned no result");
+            }
 
             /*
              * IMPORTANT:
@@ -383,7 +390,14 @@ public class TaskRunnerService {
                             + e.getMessage()
             );
 
-            throw e;
+            if (e instanceof InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                throw interrupted;
+            }
+            if (e instanceof RuntimeException runtimeException) {
+                throw runtimeException;
+            }
+            throw new RuntimeException("Plugin execution failed: " + e.getMessage(), e);
 
         } finally {
 
@@ -392,158 +406,6 @@ public class TaskRunnerService {
              * finishes.
              */
             heartbeat.stop();
-        }
-    }
-
-
-    public void runExecution(
-            WorkflowExecution workflowExecution,
-            List<List<Long>> stages,
-            Map<Long, TaskExecution> taskExecutionMap) {
-
-        ExecutorService executorService =
-                Executors.newFixedThreadPool(4);
-
-        int currentStageIndex = -1;
-
-        try {
-
-            for (int stageIndex = 0;
-                 stageIndex < stages.size();
-                 stageIndex++) {
-
-                currentStageIndex = stageIndex;
-
-                List<Long> stage =
-                        stages.get(stageIndex);
-
-                System.out.println(
-                        "Starting Stage : "
-                                + stage
-                );
-
-                List<TaskFuture> futures =
-                        new ArrayList<>();
-
-                for (Long taskId : stage) {
-
-                    TaskExecution taskExecution =
-                            taskExecutionMap.get(taskId);
-
-                    Long taskExecutionId =
-                            taskExecution.getId();
-
-                    Integer maxRetries =
-                            taskExecution
-                                    .getTaskNode()
-                                    .getMaxRetries();
-
-                    Integer timeoutSeconds =
-                            taskExecution
-                                    .getTaskNode()
-                                    .getTimeoutSeconds();
-
-                    Future<?> future =
-                            executorService.submit(() -> {
-
-                                try {
-
-                                    executeWithRetry(
-                                            taskExecutionId,
-                                            maxRetries,
-                                            timeoutSeconds
-                                    );
-
-                                } catch (InterruptedException e) {
-
-                                    Thread.currentThread()
-                                            .interrupt();
-
-                                    executionLogService.log(
-                                            taskExecutionId,
-                                            LogLevel.ERROR,
-                                            "Task interrupted"
-                                    );
-
-                                    throw new RuntimeException(e);
-                                }
-
-                                return null;
-                            });
-
-                    futures.add(
-                            new TaskFuture(
-                                    future,
-                                    taskExecutionId,
-                                    null
-                            )
-                    );
-                }
-
-                /*
-                 * Timeout is handled inside each retry attempt.
-                 */
-                for (TaskFuture taskFuture : futures) {
-
-                    try {
-
-                        taskFuture.future().get();
-
-                    } catch (ExecutionException e) {
-
-                        throw new RuntimeException(
-                                e.getCause()
-                        );
-
-                    } catch (InterruptedException e) {
-
-                        Thread.currentThread()
-                                .interrupt();
-
-                        throw e;
-                    }
-                }
-
-                System.out.println(
-                        "Completed Stage : "
-                                + stage
-                );
-            }
-
-            workflowExecution.setStatus(
-                    WorkflowExecutionStatus.SUCCESS
-            );
-
-        } catch (Exception e) {
-
-            System.out.println(
-                    "Workflow Failed : "
-                            + e.getMessage()
-            );
-
-            skipRemainingStages(
-                    currentStageIndex,
-                    stages,
-                    taskExecutionMap
-            );
-
-            workflowExecution.setStatus(
-                    WorkflowExecutionStatus.FAILED
-            );
-
-            throw new RuntimeException(e);
-
-        } finally {
-
-            workflowExecution.setFinishedAt(
-                    LocalDateTime.now()
-            );
-
-            workflowExecutionRepository.save(
-                    workflowExecution
-            );
-
-            executorService.shutdown();
         }
     }
 
@@ -657,6 +519,9 @@ public class TaskRunnerService {
                         "Task lease lost; execution cannot continue safely"
                 );
 
+                throw e;
+
+            } catch (TaskAlreadyInProgressException e) {
                 throw e;
 
             } catch (TaskTimeoutException e) {
@@ -853,10 +718,6 @@ public class TaskRunnerService {
                         taskExecutionId
                 );
 
-                System.out.println(
-                        "Skipped task "
-                                + taskExecutionId
-                );
             }
         }
     }
@@ -879,6 +740,17 @@ public class TaskRunnerService {
                 .yPosition(original.getYPosition())
                 .displayName(original.getDisplayName())
                 .build();
+    }
+
+    private Map<String, Object> parsePluginConfiguration(String pluginType, String configurationJson) {
+        if (configurationJson == null || configurationJson.isBlank()) return Map.of();
+        try {
+            Map<String, Object> parsed = objectMapper.readValue(configurationJson, new TypeReference<>() { });
+            if (parsed == null) throw new IllegalArgumentException("configuration must be a JSON object");
+            return parsed;
+        } catch (JsonProcessingException | IllegalArgumentException e) {
+            throw new IllegalArgumentException("Invalid JSON configuration for plugin '" + pluginType + "': " + e.getMessage(), e);
+        }
     }
 
 

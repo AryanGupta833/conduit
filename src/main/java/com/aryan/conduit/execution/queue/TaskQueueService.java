@@ -3,6 +3,7 @@ package com.aryan.conduit.execution.queue;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataAccessException;
 import org.springframework.data.domain.Range;
 import org.springframework.data.redis.connection.stream.Consumer;
@@ -17,33 +18,43 @@ import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
 @Service
 public class TaskQueueService {
 
-    private static final String TASK_STREAM = "conduit:task-stream";
-    private static final String CONSUMER_GROUP = "conduit-workers";
+    private static final String DEFAULT_TASK_STREAM = "conduit:task-stream";
+    private static final String DEFAULT_CONSUMER_GROUP = "conduit-workers";
     private static final String PAYLOAD_FIELD = "payload";
 
     private final RedisTemplate<String, Object> taskRedisTemplate;
     private final ObjectMapper objectMapper;
+    private final String taskStream;
+    private final String consumerGroup;
 
     @Autowired
     public TaskQueueService(
             RedisTemplate<String, Object> taskRedisTemplate,
-            ObjectMapper objectMapper
+            ObjectMapper objectMapper,
+            @Value("${conduit.execution.queue.stream:conduit:task-stream}") String taskStream,
+            @Value("${conduit.execution.queue.group:conduit-workers}") String consumerGroup
     ) {
         this.taskRedisTemplate = taskRedisTemplate;
         this.objectMapper = objectMapper;
+        this.taskStream = taskStream;
+        this.consumerGroup = consumerGroup;
     }
 
     public TaskQueueService(
             RedisTemplate<String, Object> taskRedisTemplate
     ) {
-        this.taskRedisTemplate = taskRedisTemplate;
-        this.objectMapper = new ObjectMapper();
+        this(taskRedisTemplate, new ObjectMapper(), DEFAULT_TASK_STREAM, DEFAULT_CONSUMER_GROUP);
+    }
+
+    public TaskQueueService(RedisTemplate<String, Object> taskRedisTemplate, ObjectMapper objectMapper) {
+        this(taskRedisTemplate, objectMapper, DEFAULT_TASK_STREAM, DEFAULT_CONSUMER_GROUP);
     }
 
     public void enqueue(TaskMessage taskMessage) {
@@ -59,7 +70,7 @@ public class TaskQueueService {
                     StreamRecords
                             .newRecord()
                             .ofMap(payload)
-                            .withStreamKey(TASK_STREAM)
+                            .withStreamKey(taskStream)
             );
 
         } catch (JsonProcessingException e) {
@@ -78,9 +89,9 @@ public class TaskQueueService {
 
         List<MapRecord<String, Object, Object>> records =
                 taskRedisTemplate.opsForStream().read(
-                        Consumer.from(CONSUMER_GROUP, consumerName),
+                        Consumer.from(consumerGroup, consumerName),
                         StreamOffset.create(
-                                TASK_STREAM,
+                                taskStream,
                                 ReadOffset.lastConsumed()
                         )
                 );
@@ -104,75 +115,73 @@ public class TaskQueueService {
             return List.of();
         }
 
-        PendingMessages pendingMessages =
-                taskRedisTemplate.opsForStream().pending(
-                        TASK_STREAM,
-                        CONSUMER_GROUP,
-                        Range.unbounded(),
-                        batchSize
-                );
+        int pageSize = Math.max(batchSize, 1);
+        List<StreamMessage> recovered = new ArrayList<>();
+        String afterId = null;
 
-        if (pendingMessages == null || pendingMessages.isEmpty()) {
-            return List.of();
-        }
+        while (true) {
+            Range<String> range = afterId == null
+                    ? Range.unbounded()
+                    : Range.leftOpen(afterId, "+");
+            PendingMessages pendingMessages = taskRedisTemplate.opsForStream().pending(
+                    taskStream,
+                    consumerGroup,
+                    range,
+                    pageSize
+            );
 
-        List<RecordId> staleIds =
-                pendingMessages.stream()
-                        .filter(message ->
-                                !message
-                                        .getElapsedTimeSinceLastDelivery()
-                                        .minus(minIdleTime)
-                                        .isNegative()
-                        )
-                        .map(PendingMessage::getId)
-                        .toList();
+            if (pendingMessages == null || pendingMessages.isEmpty()) break;
 
-        if (staleIds.isEmpty()) {
-            return List.of();
-        }
+            List<PendingMessage> page = pendingMessages.stream().toList();
+            List<RecordId> staleIds = page.stream()
+                    .filter(message -> !message.getElapsedTimeSinceLastDelivery().minus(minIdleTime).isNegative())
+                    .map(PendingMessage::getId)
+                    .toList();
 
-        List<MapRecord<String, Object, Object>> claimedRecords =
-                taskRedisTemplate.opsForStream().claim(
-                        TASK_STREAM,
-                        CONSUMER_GROUP,
+            if (!staleIds.isEmpty()) {
+                List<MapRecord<String, Object, Object>> claimedRecords = taskRedisTemplate.opsForStream().claim(
+                        taskStream,
+                        consumerGroup,
                         consumerName,
                         minIdleTime,
                         staleIds.toArray(new RecordId[0])
                 );
+                if (claimedRecords != null) {
+                    claimedRecords.stream().map(this::toStreamMessage).forEach(recovered::add);
+                }
+            }
 
-        if (claimedRecords == null || claimedRecords.isEmpty()) {
-            return List.of();
+            if (page.size() < pageSize) break;
+            afterId = page.get(page.size() - 1).getIdAsString();
         }
 
-        return claimedRecords.stream()
-                .map(this::toStreamMessage)
-                .toList();
+        return recovered;
     }
 
     public void acknowledge(RecordId recordId) {
         taskRedisTemplate.opsForStream()
                 .acknowledge(
-                        TASK_STREAM,
-                        CONSUMER_GROUP,
+                        taskStream,
+                        consumerGroup,
                         recordId
                 );
     }
 
     public long streamEntryCount() {
-        Long size = taskRedisTemplate.opsForStream().size(TASK_STREAM);
+        Long size = taskRedisTemplate.opsForStream().size(taskStream);
         return size == null ? 0 : size;
     }
 
     public long pendingCount() {
         if (!ensureConsumerGroup()) return 0;
-        var pending = taskRedisTemplate.opsForStream().pending(TASK_STREAM, CONSUMER_GROUP);
+        var pending = taskRedisTemplate.opsForStream().pending(taskStream, consumerGroup);
         return pending == null ? 0 : pending.getTotalPendingMessages();
     }
 
     private boolean ensureConsumerGroup() {
 
         Boolean exists =
-                taskRedisTemplate.hasKey(TASK_STREAM);
+                taskRedisTemplate.hasKey(taskStream);
 
         if (!Boolean.TRUE.equals(exists)) {
             return false;
@@ -180,9 +189,9 @@ public class TaskQueueService {
 
         try {
             taskRedisTemplate.opsForStream().createGroup(
-                    TASK_STREAM,
+                    taskStream,
                     ReadOffset.from("0-0"),
-                    CONSUMER_GROUP
+                    consumerGroup
             );
         } catch (DataAccessException ignored) {
             // Group already exists.

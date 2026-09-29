@@ -4,6 +4,8 @@ import com.aryan.conduit.execution.TaskExecutionBackend;
 import com.aryan.conduit.execution.TaskExecutionResult;
 import com.aryan.conduit.observability.ConduitMetrics;
 import org.springframework.stereotype.Service;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.BufferedReader;
 import java.io.InputStream;
@@ -16,6 +18,7 @@ import java.util.concurrent.TimeUnit;
 
 @Service
 public class DockerExecutionService implements TaskExecutionBackend {
+    private static final Logger log = LoggerFactory.getLogger(DockerExecutionService.class);
     private final ConduitMetrics metrics;
 
     public DockerExecutionService(ConduitMetrics metrics) { this.metrics = metrics; }
@@ -115,10 +118,6 @@ public class DockerExecutionService implements TaskExecutionBackend {
             stdoutThread.join();
             stderrThread.join();
 
-            // --rm should normally remove it automatically,
-            // but cleanup makes lifecycle behavior explicit.
-            cleanupContainer(containerName);
-
             return new TaskExecutionResult(
                     containerName,
                     stdout.toString(),
@@ -145,21 +144,26 @@ public class DockerExecutionService implements TaskExecutionBackend {
     private void cleanupContainer(String containerName) {
 
         try {
-            Process cleanupProcess =
-                    new ProcessBuilder(
+            Process cleanupProcess = new ProcessBuilder(
                             "docker",
                             "rm",
                             "-f",
                             containerName
-                    ).start();
+                    )
+                    .redirectErrorStream(true)
+                    .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+                    .start();
 
-            cleanupProcess.waitFor(
-                    5,
-                    TimeUnit.SECONDS
-            );
+            if (!cleanupProcess.waitFor(5, TimeUnit.SECONDS)) {
+                cleanupProcess.destroyForcibly();
+                log.warn("Timed out while cleaning up Docker container {}", containerName);
+            } else if (cleanupProcess.exitValue() != 0) {
+                log.warn("Docker cleanup for container {} exited with code {}", containerName,
+                        cleanupProcess.exitValue());
+            }
 
-        } catch (Exception ignored) {
-            // Best-effort cleanup.
+        } catch (Exception e) {
+            log.warn("Unable to clean up Docker container {}", containerName, e);
         }
     }
 

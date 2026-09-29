@@ -7,6 +7,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.time.Duration;
 import java.util.List;
@@ -15,6 +17,7 @@ import java.util.UUID;
 
 @Service("kubernetesExecutionService")
 public class KubernetesExecutionService implements TaskExecutionBackend {
+    private static final Logger log = LoggerFactory.getLogger(KubernetesExecutionService.class);
     private final KubectlCommandRunner runner;
     private final ObjectMapper mapper;
     private final String namespace;
@@ -109,7 +112,12 @@ public class KubernetesExecutionService implements TaskExecutionBackend {
     private long remainingSeconds(long deadline) { return Math.max(1, Duration.ofNanos(deadline - System.nanoTime()).toSeconds()); }
     private void cleanup(String jobName) {
         try {
-            runner.run(List.of("kubectl", "delete", "job", jobName, "-n", namespace, "--ignore-not-found=true", "--wait=false"), null, Duration.ofSeconds(10));
-        } catch (Exception ignored) { }
+            KubectlCommandRunner.CommandResult result = runner.run(List.of("kubectl", "delete", "job", jobName, "-n", namespace, "--ignore-not-found=true", "--wait=false"), null, Duration.ofSeconds(10));
+            if (result.timedOut() || result.exitCode() != 0) {
+                log.warn("Kubernetes Job cleanup did not complete for {}: {}", jobName, result.stderr());
+            }
+        } catch (Exception e) {
+            log.warn("Unable to clean up Kubernetes Job {}", jobName, e);
+        }
     }
 }

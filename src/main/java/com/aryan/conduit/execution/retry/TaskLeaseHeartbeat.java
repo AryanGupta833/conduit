@@ -1,6 +1,8 @@
 package com.aryan.conduit.execution.retry;
 
 import com.aryan.conduit.execution.service.IdempotencyService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.UUID;
 import java.util.concurrent.Executors;
@@ -10,6 +12,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class TaskLeaseHeartbeat {
+
+    private static final Logger log = LoggerFactory.getLogger(TaskLeaseHeartbeat.class);
 
     private final IdempotencyService idempotencyService;
     private final String idempotencyKey;
@@ -68,9 +72,7 @@ public class TaskLeaseHeartbeat {
 
                 leaseLost.set(true);
 
-                System.err.println(
-                        "LEASE LOST: " + idempotencyKey
-                );
+                log.warn("Lease lost for task key {}", idempotencyKey);
 
                 stopHeartbeat();
             }
@@ -79,12 +81,7 @@ public class TaskLeaseHeartbeat {
 
             leaseLost.set(true);
 
-            System.err.println(
-                    "Lease heartbeat failed: "
-                            + idempotencyKey
-            );
-
-            e.printStackTrace();
+            log.warn("Lease heartbeat failed for task key {}", idempotencyKey, e);
 
             stopHeartbeat();
         }

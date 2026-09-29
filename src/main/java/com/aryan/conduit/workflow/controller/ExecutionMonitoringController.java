@@ -1,11 +1,9 @@
 package com.aryan.conduit.workflow.controller;
 
 
-import com.aryan.conduit.execution.entity.WorkflowExecution;
 import com.aryan.conduit.execution.service.ExecutionMonitoringService;
 import com.aryan.conduit.workflow.dto.ExecutionLogResponse;
 import com.aryan.conduit.workflow.dto.TaskExecutionResponse;
-import com.aryan.conduit.workflow.dto.WorkflowExecutionDetailResponse;
 import com.aryan.conduit.workflow.dto.WorkflowExecutionResponse;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -26,11 +24,6 @@ public class ExecutionMonitoringController {
     public List<WorkflowExecutionResponse> getExecutions(){
         return executionMonitoringService.getExecutions();
     }
-
-//    @GetMapping("/{id}")
-//    public WorkflowExecutionDetailResponse getExecution(@PathVariable Long id){
-//        return executionMonitoringService.getExecution(id);
-//    }
 
     @GetMapping("/{id}/tasks")
     public List<TaskExecutionResponse> getTasks(@PathVariable Long id){

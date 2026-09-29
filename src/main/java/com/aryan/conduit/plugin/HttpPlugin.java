@@ -1,15 +1,16 @@
 package com.aryan.conduit.plugin;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.aryan.conduit.plugin.PluginResult;
-import com.aryan.conduit.plugin.WorkflowPlugin;
-import com.aryan.conduit.workflow.entity.TaskNode;
+import com.aryan.conduit.plugin.sdk.PluginConfigurationException;
+import com.aryan.conduit.plugin.sdk.PluginContext;
+import com.aryan.conduit.plugin.sdk.PluginMetadata;
+import com.aryan.conduit.plugin.sdk.PluginResult;
+import com.aryan.conduit.plugin.sdk.WorkflowPlugin;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.*;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestTemplate;
 
+import java.util.List;
 import java.util.Map;
 
 @Component
@@ -18,38 +19,32 @@ public class HttpPlugin implements WorkflowPlugin {
 
     private final RestTemplate restTemplate;
 
-    private final ObjectMapper objectMapper = new ObjectMapper();
-
     @Override
-    public String getType() {
-        return "HTTP";
+    public PluginMetadata metadata() {
+        return new PluginMetadata("HTTP", "HTTP Request", "Execute an HTTP request.", "1.0.0",
+                Map.of("type", "object", "required", List.of("url"), "properties", Map.of(
+                        "url", Map.of("type", "string"), "method", Map.of("type", "string"))));
     }
 
     @Override
-    public PluginResult execute(TaskNode task,
-                                Map<String, Object> variables) {
+    public void validateConfiguration(Map<String, Object> configuration) {
+        Object url = configuration.get("url");
+        if (url == null || url.toString().isBlank()) {
+            throw new PluginConfigurationException("HTTP plugin requires a non-empty 'url' configuration");
+        }
+        try {
+            HttpMethod.valueOf(String.valueOf(configuration.getOrDefault("method", "GET")).toUpperCase());
+        } catch (IllegalArgumentException e) {
+            throw new PluginConfigurationException("HTTP plugin has an unsupported 'method'", e);
+        }
+    }
+
+    @Override
+    public PluginResult execute(PluginContext context) {
 
         try {
-
-            JsonNode config =
-                    objectMapper.readTree(
-                            task.getConfigurationJson());
-
-            JsonNode urlNode = config.get("url");
-
-            if (urlNode == null || urlNode.isNull() || urlNode.asText().isBlank()) {
-                return PluginResult.builder()
-                        .success(false)
-                        .output("HTTP plugin requires a non-empty 'url' configuration")
-                        .build();
-            }
-
-            String url = urlNode.asText();
-
-            String method =
-                    config.has("method")
-                            ? config.get("method").asText()
-                            : "GET";
+            String url = String.valueOf(context.configuration().get("url"));
+            String method = String.valueOf(context.configuration().getOrDefault("method", "GET")).toUpperCase();
 
             HttpMethod httpMethod =
                     HttpMethod.valueOf(method);

@@ -5,9 +5,12 @@ import com.aryan.conduit.execution.queue.TaskQueueService;
 import com.aryan.conduit.execution.repository.WorkflowExecutionRepository;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 @Component
 public class ConduitMetricsRefresher {
+    private static final Logger log = LoggerFactory.getLogger(ConduitMetricsRefresher.class);
     private final WorkflowExecutionRepository workflows;
     private final TaskQueueService queue;
     private final ConduitMetrics metrics;
@@ -23,9 +26,13 @@ public class ConduitMetricsRefresher {
     public void refresh() {
         try {
             metrics.setActiveWorkflows(workflows.countByStatus(WorkflowExecutionStatus.RUNNING));
-        } catch (RuntimeException ignored) { }
+        } catch (RuntimeException e) {
+            log.warn("Unable to refresh active workflow metrics", e);
+        }
         try {
             metrics.setQueueSnapshot(queue.streamEntryCount(), queue.pendingCount());
-        } catch (RuntimeException ignored) { }
+        } catch (RuntimeException e) {
+            log.warn("Unable to refresh task queue metrics", e);
+        }
     }
 }

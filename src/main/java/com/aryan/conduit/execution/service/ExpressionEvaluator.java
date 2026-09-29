@@ -14,7 +14,6 @@ public class ExpressionEvaluator {
         }
         if(node instanceof VariableNode variable){
             String name=variable.name();
-            System.out.println("Resolving variable "+name);
             if(!name.contains(".")){
                 return variables.get(name);
             }
@@ -29,7 +28,6 @@ public class ExpressionEvaluator {
                     return null;
                 }
             }
-            System.out.println("Resolved value "+current);
             return current;
         }
         if(node instanceof BinaryNode binary){

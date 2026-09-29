@@ -1,22 +1,22 @@
 package com.aryan.conduit.plugin;
 
-import com.aryan.conduit.workflow.entity.TaskNode;
+import com.aryan.conduit.plugin.sdk.PluginContext;
+import com.aryan.conduit.plugin.sdk.PluginMetadata;
+import com.aryan.conduit.plugin.sdk.PluginResult;
+import com.aryan.conduit.plugin.sdk.WorkflowPlugin;
 import org.springframework.stereotype.Component;
-
-import java.util.Map;
 
 @Component
 public class FailPlugin implements WorkflowPlugin {
 
     @Override
-    public String getType() {
-        return "FAIL";
+    public PluginMetadata metadata() {
+        return PluginMetadata.of("FAIL", "Fail", "Intentionally fail a task for retry behavior testing.", "1.0.0");
     }
 
     @Override
     public PluginResult execute(
-            TaskNode task,
-            Map<String, Object> variables) {
+            PluginContext context) {
 
         return PluginResult.builder()
                 .success(false)

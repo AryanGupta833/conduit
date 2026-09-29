@@ -1,11 +1,13 @@
 package com.aryan.conduit.trigger;
 
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
 
 @Component
 @RequiredArgsConstructor
+@Slf4j
 public class WorkflowTriggerConsumer {
 
     private static final String TOPIC =
@@ -32,12 +34,6 @@ public class WorkflowTriggerConsumer {
                         event.workflowId()
                 );
 
-        System.out.println(
-                "Workflow triggered successfully. "
-                        + "workflowId="
-                        + event.workflowId()
-                        + ", executionId="
-                        + executionId
-        );
+        log.info("Workflow {} triggered as execution {}", event.workflowId(), executionId);
     }
 }

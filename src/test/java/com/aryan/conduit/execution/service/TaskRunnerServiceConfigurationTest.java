@@ -6,8 +6,9 @@ import com.aryan.conduit.execution.repository.TaskExecutionRepository;
 import com.aryan.conduit.execution.repository.WorkflowExecutionRepository;
 import com.aryan.conduit.execution.retry.RetryPolicyFactory;
 import com.aryan.conduit.plugin.PluginManager;
-import com.aryan.conduit.plugin.PluginResult;
-import com.aryan.conduit.plugin.WorkflowPlugin;
+import com.aryan.conduit.plugin.sdk.PluginContext;
+import com.aryan.conduit.plugin.sdk.PluginResult;
+import com.aryan.conduit.plugin.sdk.WorkflowPlugin;
 import com.aryan.conduit.workflow.entity.TaskNode;
 import com.aryan.conduit.observability.ConduitMetrics;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -30,16 +31,15 @@ import static org.mockito.Mockito.when;
 class TaskRunnerServiceConfigurationTest {
 
     private TaskExecutionRepository taskExecutionRepository;
-    private WorkflowExecutionRepository workflowExecutionRepository;
     private TaskExecutionService taskExecutionService;
     private ExecutionLogService executionLogService;
     private TaskOutputService taskOutputService;
-    private CircuitBreakerTaskService circuitBreakerTaskService;
     private PluginManager pluginManager;
     private RetryPolicyFactory retryPolicyFactory;
     private IdempotencyService idempotencyService;
     private ObjectMapper objectMapper;
     private ConfigurationResolver configurationResolver;
+    private ExpressionContextService expressionContextService;
 
     private TaskRunnerService taskRunnerService;
 
@@ -51,8 +51,6 @@ class TaskRunnerServiceConfigurationTest {
         taskExecutionRepository =
                 mock(TaskExecutionRepository.class);
 
-        workflowExecutionRepository =
-                mock(WorkflowExecutionRepository.class);
 
         taskExecutionService =
                 mock(TaskExecutionService.class);
@@ -63,8 +61,6 @@ class TaskRunnerServiceConfigurationTest {
         taskOutputService =
                 mock(TaskOutputService.class);
 
-        circuitBreakerTaskService =
-                mock(CircuitBreakerTaskService.class);
 
         pluginManager =
                 mock(PluginManager.class);
@@ -81,23 +77,24 @@ class TaskRunnerServiceConfigurationTest {
         configurationResolver =
                 mock(ConfigurationResolver.class);
 
+        expressionContextService = mock(ExpressionContextService.class);
+
         plugin =
                 mock(WorkflowPlugin.class);
 
         taskRunnerService =
                 new TaskRunnerService(
                         taskExecutionRepository,
-                        workflowExecutionRepository,
                         taskExecutionService,
                         executionLogService,
                         taskOutputService,
-                        circuitBreakerTaskService,
                         pluginManager,
                         retryPolicyFactory,
                         idempotencyService,
                         objectMapper,
                         configurationResolver,
-                        new ConduitMetrics(new SimpleMeterRegistry())
+                        new ConduitMetrics(new SimpleMeterRegistry()),
+                        expressionContextService
                 );
     }
 
@@ -192,8 +189,7 @@ class TaskRunnerServiceConfigurationTest {
                         .build();
 
         when(plugin.execute(
-                any(TaskNode.class),
-                anyMap()
+                any(PluginContext.class)
         )).thenReturn(pluginResult);
 
         taskRunnerService.executeWithRetry(
@@ -210,14 +206,7 @@ class TaskRunnerServiceConfigurationTest {
 
         verify(plugin)
                 .execute(
-                        argThat(runtimeTaskNode ->
-                                runtimeTaskNode
-                                        .getConfigurationJson()
-                                        .contains(
-                                                "https://example.com/users/42"
-                                        )
-                        ),
-                        anyMap()
+                        argThat(context -> context.configuration().get("url").equals("https://example.com/users/42"))
                 );
     }
 }

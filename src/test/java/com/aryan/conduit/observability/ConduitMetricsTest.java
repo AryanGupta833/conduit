@@ -21,8 +21,8 @@ class ConduitMetricsTest {
 
         assertEquals(1.0, registry.get("conduit.workflow.starts").counter().count());
         assertEquals(1.0, registry.get("conduit.workflow.executions").tag("status", "success").counter().count());
-        assertEquals(1.0, registry.get("conduit.task.executions").tag("plugin_type", "http").tag("status", "failed").counter().count());
-        assertEquals(1.0, registry.get("conduit.task.retries").tag("plugin_type", "http").counter().count());
+        assertEquals(1.0, registry.get("conduit.task.executions").tag("plugin_type", "HTTP").tag("status", "FAILED").counter().count());
+        assertEquals(1.0, registry.get("conduit.task.retries").tag("plugin_type", "HTTP").counter().count());
         assertEquals(1.0, registry.get("conduit.backend.executions").tag("backend", "docker").tag("status", "success").counter().count());
         assertEquals(0.0, registry.get("conduit.worker.active.tasks").gauge().value());
         assertEquals(1.0, registry.get("conduit.worker.tasks.processed").tag("status", "success").counter().count());

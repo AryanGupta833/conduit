@@ -21,9 +21,11 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -224,5 +226,32 @@ class TaskQueueServiceRecoveryTest {
                         eq(Duration.ofSeconds(30)),
                         any(RecordId[].class)
                 );
+    }
+
+    @Test
+    void shouldScanPastFreshPendingMessagesToRecoverLaterStaleDeliveries() {
+        PendingMessage freshOne = pending("1-0", Duration.ofSeconds(5));
+        PendingMessage freshTwo = pending("2-0", Duration.ofSeconds(5));
+        PendingMessage stale = pending("3-0", Duration.ofSeconds(45));
+        PendingMessages firstPage = new PendingMessages(CONSUMER_GROUP, List.of(freshOne, freshTwo));
+        PendingMessages secondPage = new PendingMessages(CONSUMER_GROUP, List.of(stale));
+        when(streamOperations.pending(eq(TASK_STREAM), eq(CONSUMER_GROUP), any(Range.class), anyLong()))
+                .thenReturn(firstPage, secondPage);
+        when(streamOperations.claim(eq(TASK_STREAM), eq(CONSUMER_GROUP), eq("recovery-worker"),
+                eq(Duration.ofSeconds(30)), any(RecordId[].class))).thenReturn(List.of());
+
+        taskQueueService.recover("recovery-worker", Duration.ofSeconds(30), 2);
+
+        verify(streamOperations, times(2)).pending(eq(TASK_STREAM), eq(CONSUMER_GROUP), any(Range.class), anyLong());
+        verify(streamOperations).claim(eq(TASK_STREAM), eq(CONSUMER_GROUP), eq("recovery-worker"),
+                eq(Duration.ofSeconds(30)), argThat(ids -> ids.length == 1 && ids[0].equals(RecordId.of("3-0"))));
+    }
+
+    private PendingMessage pending(String id, Duration elapsed) {
+        PendingMessage message = mock(PendingMessage.class);
+        when(message.getId()).thenReturn(RecordId.of(id));
+        when(message.getIdAsString()).thenReturn(id);
+        when(message.getElapsedTimeSinceLastDelivery()).thenReturn(elapsed);
+        return message;
     }
 }

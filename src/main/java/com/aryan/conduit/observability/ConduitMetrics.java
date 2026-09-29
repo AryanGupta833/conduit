@@ -46,15 +46,15 @@ public class ConduitMetrics {
 
     public void taskFinished(String pluginType, String status, long durationNanos) {
         safe(() -> {
-            registry.counter("conduit.task.executions", "plugin_type", normalize(pluginType), "status", normalize(status)).increment();
+            registry.counter("conduit.task.executions", "plugin_type", normalizePluginType(pluginType), "status", normalizeStatus(status)).increment();
             Timer.builder("conduit.task.execution.duration")
-                    .tag("plugin_type", normalize(pluginType)).tag("status", normalize(status)).publishPercentileHistogram()
+                    .tag("plugin_type", normalizePluginType(pluginType)).tag("status", normalizeStatus(status)).publishPercentileHistogram()
                     .register(registry).record(Math.max(0, durationNanos), java.util.concurrent.TimeUnit.NANOSECONDS);
         });
     }
 
     public void taskRetry(String pluginType) {
-        safe(() -> registry.counter("conduit.task.retries", "plugin_type", normalize(pluginType)).increment());
+        safe(() -> registry.counter("conduit.task.retries", "plugin_type", normalizePluginType(pluginType)).increment());
     }
 
     public void setActiveWorkflows(long value) { safe(() -> activeWorkflows.set(Math.max(0, value))); }
@@ -85,6 +85,14 @@ public class ConduitMetrics {
     private String normalize(String value) {
         if (value == null || value.isBlank()) return "unknown";
         return value.trim().toLowerCase(java.util.Locale.ROOT);
+    }
+
+    private String normalizePluginType(String value) {
+        return value == null || value.isBlank() ? "UNKNOWN" : value.trim().toUpperCase(java.util.Locale.ROOT);
+    }
+
+    private String normalizeStatus(String value) {
+        return value == null || value.isBlank() ? "UNKNOWN" : value.trim().toUpperCase(java.util.Locale.ROOT);
     }
 
     private void safe(Runnable action) {

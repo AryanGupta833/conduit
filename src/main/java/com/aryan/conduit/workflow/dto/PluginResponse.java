@@ -4,6 +4,13 @@ import java.util.List;
 import java.util.Map;
 
 public record PluginResponse(
-        String type, String description, List<String> inputs, List<String> outputs, Map<String,Object> configExample
+        String type,
+        String description,
+        List<String> inputs,
+        List<String> outputs,
+        Map<String,Object> configExample,
+        String displayName,
+        String version,
+        Map<String,Object> configurationSchema
         ) {
 }

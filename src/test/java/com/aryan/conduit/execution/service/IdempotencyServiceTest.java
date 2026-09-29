@@ -3,7 +3,7 @@ package com.aryan.conduit.execution.service;
 import com.aryan.conduit.execution.entity.IdempotencyRecord;
 import com.aryan.conduit.execution.entity.IdempotencyStatus;
 import com.aryan.conduit.execution.repository.IdempotencyRecordRepository;
-import com.aryan.conduit.plugin.PluginResult;
+import com.aryan.conduit.plugin.sdk.PluginResult;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
