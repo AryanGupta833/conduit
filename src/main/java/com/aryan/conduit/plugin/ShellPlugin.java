@@ -1,19 +1,25 @@
 package com.aryan.conduit.plugin;
 
+import com.aryan.conduit.docker.DockerExecutionResult;
+import com.aryan.conduit.docker.DockerExecutionService;
 import com.aryan.conduit.workflow.entity.TaskNode;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
+import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 
 @Component
+@RequiredArgsConstructor
 public class ShellPlugin implements WorkflowPlugin {
 
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final DockerExecutionService dockerExecutionService;
+
+    private final ObjectMapper objectMapper =
+            new ObjectMapper();
 
     @Override
     public String getType() {
@@ -25,66 +31,82 @@ public class ShellPlugin implements WorkflowPlugin {
             TaskNode task,
             Map<String, Object> variables
     ) {
+
         try {
 
             JsonNode config =
-                    objectMapper.readTree(task.getConfigurationJson());
+                    objectMapper.readTree(
+                            task.getConfigurationJson()
+                    );
 
-            String command = config.get("command").asText();
-
-            ProcessBuilder processBuilder;
-
-            String os =
-                    System.getProperty("os.name").toLowerCase();
-
-            if (os.contains("win")) {
-
-                // Windows
-                processBuilder = new ProcessBuilder(
-                        "cmd.exe",
-                        "/c",
-                        command
-                );
-
-            } else {
-
-                // Linux / macOS
-                processBuilder = new ProcessBuilder(
-                        "sh",
-                        "-c",
-                        command
-                );
+            if (!config.has("command")) {
+                return PluginResult.builder()
+                        .success(false)
+                        .output(
+                                "Missing 'command' in SHELL configuration"
+                        )
+                        .build();
             }
 
-            processBuilder.redirectErrorStream(true);
+            String command =
+                    config.get("command").asText();
 
-            Process process = processBuilder.start();
+            int timeoutSeconds =
+                    task.getTimeoutSeconds() != null
+                            && task.getTimeoutSeconds() > 0
+                            ? task.getTimeoutSeconds()
+                            : 30;
 
-            BufferedReader reader =
-                    new BufferedReader(
-                            new InputStreamReader(
-                                    process.getInputStream()
+            DockerExecutionResult result =
+                    dockerExecutionService.execute(
+                            "alpine:latest",
+                            List.of(
+                                    "sh",
+                                    "-c",
+                                    command
+                            ),
+                            Duration.ofSeconds(
+                                    timeoutSeconds
                             )
                     );
 
-            StringBuilder output =
-                    new StringBuilder();
+            if (result.timedOut()) {
 
-            String line;
-
-            while ((line = reader.readLine()) != null) {
-                output.append(line).append("\n");
+                return PluginResult.builder()
+                        .success(false)
+                        .output(
+                                "Docker task timed out after "
+                                        + timeoutSeconds
+                                        + " seconds"
+                        )
+                        .metadata(
+                                Map.of(
+                                        "containerId",
+                                        result.containerId(),
+                                        "timedOut",
+                                        true,
+                                        "command",
+                                        command
+                                )
+                        )
+                        .build();
             }
 
-            int exitCode = process.waitFor();
-
             return PluginResult.builder()
-                    .success(exitCode == 0)
-                    .output(output.toString())
+                    .success(result.isSuccess())
+                    .output(
+                            result.stdout().isBlank()
+                                    ? result.stderr()
+                                    : result.stdout()
+                    )
                     .metadata(
                             Map.of(
-                                    "exitCode", exitCode,
-                                    "command", command
+                                    "containerId",
+                                    result.containerId(),
+                                    "exitCode",
+                                    result.exitCode(),
+                                    "command",
+                                    command
                             )
                     )
                     .build();
@@ -93,7 +115,9 @@ public class ShellPlugin implements WorkflowPlugin {
 
             return PluginResult.builder()
                     .success(false)
-                    .output(ex.getMessage())
+                    .output(
+                            ex.getMessage()
+                    )
                     .build();
         }
     }
