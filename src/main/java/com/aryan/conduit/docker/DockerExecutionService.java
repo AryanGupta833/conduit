@@ -1,5 +1,7 @@
 package com.aryan.conduit.docker;
 
+import com.aryan.conduit.execution.TaskExecutionBackend;
+import com.aryan.conduit.execution.TaskExecutionResult;
 import org.springframework.stereotype.Service;
 
 import java.io.BufferedReader;
@@ -12,9 +14,9 @@ import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
 @Service
-public class DockerExecutionService {
+public class DockerExecutionService implements TaskExecutionBackend {
 
-    public DockerExecutionResult execute(
+    public TaskExecutionResult execute(
             String image,
             List<String> command,
             Duration timeout
@@ -83,7 +85,7 @@ public class DockerExecutionService {
                 stdoutThread.join(1000);
                 stderrThread.join(1000);
 
-                return new DockerExecutionResult(
+                return new TaskExecutionResult(
                         containerName,
                         stdout.toString(),
                         stderr.toString(),
@@ -101,7 +103,7 @@ public class DockerExecutionService {
             // but cleanup makes lifecycle behavior explicit.
             cleanupContainer(containerName);
 
-            return new DockerExecutionResult(
+            return new TaskExecutionResult(
                     containerName,
                     stdout.toString(),
                     stderr.toString(),

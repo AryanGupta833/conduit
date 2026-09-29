@@ -1,5 +1,6 @@
 package com.aryan.conduit.docker;
 
+import com.aryan.conduit.execution.TaskExecutionResult;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -16,7 +17,7 @@ public class DockerTestController {
     private final DockerExecutionService dockerExecutionService;
 
     @GetMapping("/test")
-    public DockerExecutionResult testDocker() {
+    public TaskExecutionResult testDocker() {
 
         return dockerExecutionService.execute(
                 "alpine:latest",

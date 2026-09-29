@@ -310,6 +310,13 @@ cd conduit
 mvn spring-boot:run
 ```
 
+On Windows, if Java fails to initialize a network selector with `Unable to establish loopback connection`, run Maven through the project helper. It sets `TEMP` and `TMP` to a project-local directory before launching Maven and its child JVMs:
+
+```cmd
+scripts\mvn.cmd spring-boot:run
+scripts\mvn.cmd test
+```
+
 ---
 
 ## Future Vision
