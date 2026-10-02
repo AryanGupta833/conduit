@@ -260,7 +260,7 @@ class TaskWorkerTest {
     }
 
     @Test
-    void shouldAcknowledgeDuplicateDeliveryForTerminalTask() {
+    void shouldAcknowledgeDuplicateDeliveryForTerminalTask() throws InterruptedException {
         StreamMessage streamMessage = createStreamMessage();
         TaskExecution taskExecution = createTaskExecution();
         taskExecution.setStatus(TaskExecutionStatus.SUCCESS);
