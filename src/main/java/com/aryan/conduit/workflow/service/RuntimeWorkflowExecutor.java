@@ -27,6 +27,21 @@ public class RuntimeWorkflowExecutor {
 
     public void execute(Long workflowExecutionId) {
 
+        WorkflowExecution workflowExecution = workflowExecutionRepository
+                .findById(workflowExecutionId)
+                .orElseThrow();
+        String correlationId = workflowExecution.getCorrelationId();
+        if (correlationId != null && !correlationId.isBlank())
+            org.slf4j.MDC.put("correlationId", correlationId);
+        else org.slf4j.MDC.remove("correlationId");
+        try {
+            dispatch(workflowExecutionId);
+        } finally {
+            org.slf4j.MDC.remove("correlationId");
+        }
+    }
+
+    private void dispatch(Long workflowExecutionId) {
         log.debug("Dispatching tasks for workflow execution {}", workflowExecutionId);
 
         WorkflowExecution workflowExecution =

@@ -7,7 +7,8 @@ import org.springframework.boot.autoconfigure.web.WebProperties;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name="workflow_versions")
+@Table(name="workflow_versions", uniqueConstraints = @UniqueConstraint(
+        name = "uk_workflow_version_number", columnNames = {"workflow_id", "version_number"}))
 @Getter
 @Setter
 @NoArgsConstructor

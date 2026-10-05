@@ -2,6 +2,7 @@ package com.aryan.conduit.execution.service;
 
 
 import com.aryan.conduit.execution.entity.WorkflowExecution;
+import com.aryan.conduit.execution.entity.WorkflowExecutionStatus;
 import com.aryan.conduit.execution.repository.WorkflowExecutionRepository;
 import com.aryan.conduit.workflow.dto.ExecutionContext;
 import com.aryan.conduit.workflow.dto.ExecutionStatusResponse;
@@ -19,12 +20,13 @@ public class ExecutionService {
     private final WorkflowExecutionAsyncService workflowExecutionAsyncService;
     private final WorkflowExecutionRepository workflowExecutionRepository;
     private final WorkflowVersionRepository workflowVersionRepository;
+    private final ExecutionContextService executionContextService;
 
 
 
     public Long startWorkflow(Long workflowId){
-        WorkflowVersion version=workflowVersionRepository.findByWorkflow_IdAndLatestTrue(workflowId).orElseThrow(
-                ()->new IllegalStateException("No latest version found for workflow "+workflowId)
+        WorkflowVersion version=workflowVersionRepository.findTopByWorkflow_IdAndPublishedTrueOrderByVersionNumberDesc(workflowId).orElseThrow(
+                ()->new IllegalStateException("No published version found for workflow "+workflowId)
         );
         return startWorkflowVersion(version.getId());
 
@@ -36,6 +38,26 @@ public class ExecutionService {
         return context.workflowExecution().getId();
 
         }
+
+    public Long startWorkflowVersion(Long workflowVersionId, Integer deadlineSeconds) {
+        ExecutionContext context = executionCreationService.createExecutionForVersion(workflowVersionId, deadlineSeconds);
+        workflowExecutionAsyncService.executeAsync(context.workflowExecution().getId());
+        return context.workflowExecution().getId();
+    }
+
+    /** Starts a new execution of the exact immutable version used by an earlier run. */
+    public Long rerunExecution(Long executionId) {
+        WorkflowExecution previous = workflowExecutionRepository.findById(executionId)
+                .orElseThrow(() -> new IllegalArgumentException("Execution not found: " + executionId));
+        if (previous.getStatus() == null || !java.util.Set.of(WorkflowExecutionStatus.SUCCESS,
+                WorkflowExecutionStatus.FAILED, WorkflowExecutionStatus.CANCELLED,
+                WorkflowExecutionStatus.TIMED_OUT).contains(previous.getStatus()))
+            throw new IllegalStateException("Only a terminal workflow execution can be rerun");
+        ExecutionContext context = executionCreationService.createExecutionForReplay(previous.getWorkflowVersion().getId());
+        executionContextService.initializeVariables(context.workflowExecution().getId(), executionContextService.getInitialVariables(executionId));
+        workflowExecutionAsyncService.executeAsync(context.workflowExecution().getId());
+        return context.workflowExecution().getId();
+    }
 
 
     public ExecutionStatusResponse getExecution(Long executionId) {
@@ -63,7 +85,8 @@ public class ExecutionService {
                 execution.getStatus(),
                 execution.getStartedAt(),
                 execution.getFinishedAt(),
-                durationMs
+                durationMs,
+                execution.getCorrelationId()
         );
     }
 

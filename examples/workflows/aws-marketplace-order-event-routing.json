@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "name": "AWS Marketplace Order Review and Event Routing",
+  "cronExpression": null,
+  "tasks": [
+    { "name": "initializeOrder", "displayName": "Initialize Order Case", "pluginType": "SET_VARIABLES", "configurationJson": "{\"variables\":{\"orderId\":\"DEMO-ORDER-2048\",\"source\":\"public-demo-feed\",\"reviewRequired\":true}}", "timeoutSeconds": 30, "maxRetries": 0, "joinCondition": "ALL_PARENTS", "xPosition": 80, "yPosition": 280 },
+    { "name": "fetchOrderRecord", "displayName": "Fetch Public Order Record", "pluginType": "HTTP", "configurationJson": "{\"url\":\"https://jsonplaceholder.typicode.com/posts/1\",\"method\":\"GET\",\"headers\":{\"Accept\":\"application/json\"},\"timeoutSeconds\":20,\"responseFormat\":\"JSON\"}", "timeoutSeconds": 30, "maxRetries": 2, "joinCondition": "ALL_PARENTS", "xPosition": 340, "yPosition": 120 },
+    { "name": "parseOrderRecord", "displayName": "Validate Order Record", "pluginType": "JSON_TRANSFORM", "configurationJson": "{\"operation\":\"PARSE\",\"input\":\"${tasks.fetchOrderRecord.output}\",\"maxOutputBytes\":262144}", "timeoutSeconds": 30, "maxRetries": 0, "joinCondition": "ALL_PARENTS", "xPosition": 600, "yPosition": 120 },
+    { "name": "assessOrderRisk", "displayName": "Assess Order Risk with Lambda", "pluginType": "AWS_LAMBDA_INVOKE", "configurationJson": "{\"functionName\":\"replace-with-order-risk-lambda\",\"invocationType\":\"REQUEST_RESPONSE\",\"payload\":{\"orderId\":\"${variables.orderId}\",\"source\":\"${variables.source}\",\"order\":\"${tasks.parseOrderRecord.output}\"}}", "timeoutSeconds": 90, "maxRetries": 1, "joinCondition": "ALL_PARENTS", "xPosition": 860, "yPosition": 360 },
+    { "name": "reviewOrder", "displayName": "Review Risk Assessment", "pluginType": "HUMAN_TASK", "configurationJson": "{\"type\":\"APPROVAL\",\"title\":\"Approve marketplace order routing\",\"description\":\"Review the public order record and Lambda risk assessment in the execution context. Approval writes an audit item to DynamoDB and publishes downstream events.\",\"timeoutSeconds\":86400,\"timeoutPolicy\":\"REJECT\",\"reminderAfterSeconds\":3600}", "timeoutSeconds": 86400, "maxRetries": 0, "joinCondition": "ALL_PARENTS", "xPosition": 1150, "yPosition": 240 },
+    { "name": "persistOrderDecision", "displayName": "Persist Decision to DynamoDB", "pluginType": "AWS_DYNAMODB", "configurationJson": "{\"tableName\":\"replace-with-demo-orders-table\",\"operation\":\"PUT_ITEM\",\"item\":{\"pk\":\"ORDER#${variables.orderId}\",\"status\":\"APPROVED\",\"source\":\"${variables.source}\",\"executionId\":\"${execution.id}\",\"riskAssessment\":\"${tasks.assessOrderRisk.output}\"}}", "timeoutSeconds": 45, "maxRetries": 2, "joinCondition": "ALL_PARENTS", "xPosition": 1450, "yPosition": 140 },
+    { "name": "publishOrderNotification", "displayName": "Publish Operations Notification", "pluginType": "AWS_SNS_PUBLISH", "configurationJson": "{\"topicArn\":\"arn:aws:sns:us-east-1:123456789012:replace-with-order-operations-topic\",\"subject\":\"Approved marketplace order\",\"message\":\"Order ${variables.orderId} was approved in execution ${execution.id}.\"}", "timeoutSeconds": 45, "maxRetries": 2, "joinCondition": "ALL_PARENTS", "xPosition": 1750, "yPosition": 100 },
+    { "name": "enqueueFulfillment", "displayName": "Queue Fulfillment Event", "pluginType": "AWS_SQS_SEND", "configurationJson": "{\"queueUrl\":\"https://sqs.us-east-1.amazonaws.com/123456789012/replace-with-order-events.fifo\",\"messageBody\":\"{\\\"orderId\\\":\\\"${variables.orderId}\\\",\\\"executionId\\\":\\\"${execution.id}\\\"}\",\"messageGroupId\":\"marketplace-orders\",\"messageDeduplicationId\":\"${execution.id}-${variables.orderId}\"}", "timeoutSeconds": 45, "maxRetries": 2, "joinCondition": "ALL_PARENTS", "xPosition": 1750, "yPosition": 300 },
+    { "name": "recordRejection", "displayName": "Record Rejected Order", "pluginType": "LOG", "configurationJson": "{\"message\":\"Marketplace order ${variables.orderId} was rejected during risk review.\"}", "timeoutSeconds": 30, "maxRetries": 0, "joinCondition": "ALL_PARENTS", "xPosition": 1450, "yPosition": 520 }
+  ],
+  "dependencies": [
+    { "parentTask": "fetchOrderRecord", "childTask": "parseOrderRecord", "condition": "ON_SUCCESS", "expression": null },
+    { "parentTask": "initializeOrder", "childTask": "reviewOrder", "condition": "ON_SUCCESS", "expression": null },
+    { "parentTask": "parseOrderRecord", "childTask": "assessOrderRisk", "condition": "ON_SUCCESS", "expression": null },
+    { "parentTask": "assessOrderRisk", "childTask": "reviewOrder", "condition": "ON_SUCCESS", "expression": null },
+    { "parentTask": "reviewOrder", "childTask": "persistOrderDecision", "condition": "ON_SUCCESS", "expression": null },
+    { "parentTask": "persistOrderDecision", "childTask": "publishOrderNotification", "condition": "ON_SUCCESS", "expression": null },
+    { "parentTask": "persistOrderDecision", "childTask": "enqueueFulfillment", "condition": "ON_SUCCESS", "expression": null },
+    { "parentTask": "reviewOrder", "childTask": "recordRejection", "condition": "ON_FAILURE", "expression": null }
+  ]
+}

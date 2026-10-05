@@ -10,8 +10,10 @@ import org.springframework.data.redis.connection.stream.MapRecord;
 import org.springframework.data.redis.connection.stream.ReadOffset;
 import org.springframework.data.redis.connection.stream.RecordId;
 import org.springframework.data.redis.connection.stream.StreamOffset;
+import org.springframework.data.redis.connection.stream.StreamReadOptions;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.StreamOperations;
+import org.springframework.dao.DataAccessResourceFailureException;
 
 import java.util.List;
 import java.util.Map;
@@ -52,7 +54,6 @@ class TaskQueueServiceTest {
 
         when(taskRedisTemplate.opsForStream())
                 .thenReturn(streamOperations);
-
         taskQueueService.enqueue(message);
 
         verify(taskRedisTemplate)
@@ -135,6 +136,7 @@ class TaskQueueServiceTest {
                 .when(streamOperations)
                 .read(
                         eq(consumer),
+                        any(StreamReadOptions.class),
                         eq(streamOffset)
                 );
 
@@ -161,6 +163,37 @@ class TaskQueueServiceTest {
     }
 
     @Test
+    void malformedPayloadIsDeadLetteredWithoutBlockingValidBatchEntries() {
+        MapRecord<String, Object, Object> malformed = mock(MapRecord.class);
+        MapRecord<String, Object, Object> valid = mock(MapRecord.class);
+        RecordId malformedId = RecordId.of("1-0");
+        RecordId validId = RecordId.of("2-0");
+        when(taskRedisTemplate.hasKey("conduit:task-stream")).thenReturn(true);
+        when(taskRedisTemplate.opsForStream()).thenReturn(streamOperations);
+        when(malformed.getId()).thenReturn(malformedId);
+        when(malformed.getValue()).thenReturn(Map.of("payload", "not-json"));
+        when(valid.getId()).thenReturn(validId);
+        when(valid.getValue()).thenReturn(Map.of("payload",
+                "{\"workflowExecutionId\":100,\"taskExecutionId\":1010,\"taskNodeId\":10}"));
+        when(streamOperations.acknowledge("conduit:task-stream", "conduit-workers", malformedId))
+                .thenReturn(1L);
+        StreamOffset<String> offset = StreamOffset.create("conduit:task-stream", ReadOffset.lastConsumed());
+        doReturn(List.of(malformed, valid)).when(streamOperations).read(
+                eq(Consumer.from("conduit-workers", "worker-1")),
+                any(StreamReadOptions.class), eq(offset));
+
+        List<StreamMessage> result = taskQueueService.read("worker-1");
+
+        assertEquals(1, result.size());
+        assertEquals(validId, result.get(0).recordId());
+        verify(streamOperations).add(argThat(record ->
+                record.getStream().equals("conduit:task-stream:dead-letter")
+                        && record.getValue().get("sourceRecordId").equals("1-0")));
+        verify(streamOperations).acknowledge("conduit:task-stream", "conduit-workers", malformedId);
+        verify(streamOperations).delete("conduit:task-stream", malformedId);
+    }
+
+    @Test
     void shouldReturnEmptyListWhenStreamDoesNotExist() {
 
         when(taskRedisTemplate.hasKey(
@@ -183,6 +216,22 @@ class TaskQueueServiceTest {
     }
 
     @Test
+    void shouldNotHideRedisFailureWhileCreatingConsumerGroup() {
+        when(taskRedisTemplate.hasKey("conduit:task-stream")).thenReturn(true);
+        when(taskRedisTemplate.opsForStream()).thenReturn(streamOperations);
+        doThrow(new DataAccessResourceFailureException("connection refused"))
+                .when(streamOperations).createGroup("conduit:task-stream", ReadOffset.from("0-0"), "conduit-workers");
+
+        org.junit.jupiter.api.Assertions.assertThrows(
+                DataAccessResourceFailureException.class,
+                () -> taskQueueService.read("worker-1"));
+        verify(streamOperations, never()).read(
+                any(org.springframework.data.redis.connection.stream.Consumer.class),
+                any(StreamReadOptions.class),
+                any(StreamOffset.class));
+    }
+
+    @Test
     void shouldAcknowledgeTask() {
 
         RecordId recordId =
@@ -190,6 +239,9 @@ class TaskQueueServiceTest {
 
         when(taskRedisTemplate.opsForStream())
                 .thenReturn(streamOperations);
+        when(streamOperations.acknowledge(
+                eq("conduit:task-stream"), eq("conduit-workers"), eq(recordId)))
+                .thenReturn(1L);
 
         taskQueueService.acknowledge(recordId);
 
@@ -199,5 +251,18 @@ class TaskQueueServiceTest {
                         eq("conduit-workers"),
                         eq(recordId)
                 );
+        verify(streamOperations).delete("conduit:task-stream", recordId);
+    }
+
+    @Test
+    void shouldNotDeleteStreamEntryWhenAckWasNotConfirmed() {
+        RecordId recordId = RecordId.of("1-0");
+        when(taskRedisTemplate.opsForStream()).thenReturn(streamOperations);
+        when(streamOperations.acknowledge("conduit:task-stream", "conduit-workers", recordId))
+                .thenReturn(0L);
+
+        taskQueueService.acknowledge(recordId);
+
+        verify(streamOperations, never()).delete(anyString(), any(RecordId.class));
     }
 }

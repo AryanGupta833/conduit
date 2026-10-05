@@ -33,4 +33,7 @@ public class TaskExecution {
 
     @Column(name = "idempotency_key", unique = true, nullable = false)
     private String idempotencyKey;
+
+    @Column(name = "resolved_configuration_json", columnDefinition = "TEXT")
+    private String resolvedConfigurationJson;
 }

@@ -31,7 +31,7 @@ public class WorkflowTriggerConsumer {
 
         Long executionId =
                 workflowTriggerService.triggerWorkflow(
-                        event.workflowId()
+                        event
                 );
 
         log.info("Workflow {} triggered as execution {}", event.workflowId(), executionId);

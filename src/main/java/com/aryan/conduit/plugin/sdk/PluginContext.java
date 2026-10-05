@@ -9,7 +9,20 @@ public record PluginContext(
         String taskName,
         Integer timeoutSeconds,
         Map<String, Object> configuration,
-        Map<String, Object> variables) {
+        Map<String, Object> variables,
+        PluginWorkspace workspace,
+        String idempotencyKey) {
+
+    public PluginContext(String taskName, Integer timeoutSeconds, Map<String, Object> configuration,
+                         Map<String, Object> variables, PluginWorkspace workspace) {
+        this(taskName, timeoutSeconds, configuration, variables, workspace, null);
+    }
+
+    /** Retained for plugins compiled against the original SDK constructor. */
+    public PluginContext(String taskName, Integer timeoutSeconds, Map<String, Object> configuration,
+                         Map<String, Object> variables) {
+        this(taskName, timeoutSeconds, configuration, variables, null, null);
+    }
 
     public PluginContext {
         configuration = immutableCopy(configuration);

@@ -18,6 +18,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 
 @ExtendWith(MockitoExtension.class)
 class TaskRecoveryServiceTest {
@@ -61,7 +62,7 @@ class TaskRecoveryServiceTest {
         );
 
         verify(taskWorker, never())
-                .process(any(StreamMessage.class));
+                .submit(any(StreamMessage.class));
     }
 
     @Test
@@ -103,7 +104,7 @@ class TaskRecoveryServiceTest {
         taskRecoveryService.recover();
 
         verify(taskWorker)
-                .process(streamMessage);
+                .submit(streamMessage);
     }
 
     @Test
@@ -166,12 +167,7 @@ class TaskRecoveryServiceTest {
         taskRecoveryService.recover();
 
         verify(taskWorker)
-                .process(message1);
-
-        verify(taskWorker)
-                .process(message2);
-
-        verify(taskWorker)
-                .process(message3);
+                .submit(message1);
+        verifyNoMoreInteractions(taskWorker);
     }
 }

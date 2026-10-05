@@ -37,6 +37,13 @@ public class ExecutionMonitoringService {
                         )).toList();
     }
 
+    public List<WorkflowExecutionResponse> getExecutionsForOwner(Long ownerId) {
+        return workflowExecutionRepository.findByWorkflowVersion_Workflow_Owner_IdOrderByIdDesc(ownerId)
+                .stream().map(execution -> new WorkflowExecutionResponse(
+                        execution.getId(), execution.getWorkflowVersion().getWorkflow().getId(), execution.getWorkflowVersion().getId(),
+                        execution.getVersionNumber(), execution.getStatus(), execution.getStartedAt(), execution.getFinishedAt())).toList();
+    }
+
     public List<TaskExecutionResponse> getTasks(
             Long executionId) {
 

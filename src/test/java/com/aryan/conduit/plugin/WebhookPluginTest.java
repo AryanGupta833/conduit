@@ -9,6 +9,10 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.client.RestTemplate;
 
 import java.util.Map;
+import java.net.URI;
+import org.springframework.http.client.ClientHttpRequest;
+import org.springframework.web.client.RequestCallback;
+import org.springframework.web.client.ResponseExtractor;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -25,13 +29,13 @@ class WebhookPluginTest {
         ObjectMapper objectMapper =
                 new ObjectMapper();
 
-        when(restTemplate.exchange(
-                eq("https://example.com/webhook"),
+        when(restTemplate.execute(
+                eq(URI.create("https://example.com/webhook")),
                 eq(HttpMethod.POST),
-                any(),
-                eq(String.class)
+                any(RequestCallback.class),
+                any(ResponseExtractor.class)
         )).thenReturn(
-                ResponseEntity.ok("{\"ok\":true}")
+                new BoundedHttpResponse(200, "{\"ok\":true}", false)
         );
 
         WebhookPlugin plugin =
@@ -49,6 +53,7 @@ class WebhookPluginTest {
                                 "https://example.com/webhook",
                                 "method",
                                 "POST",
+                                "allowPrivateNetwork", true,
                                 "body",
                                 Map.of(
                                         "message",
@@ -68,11 +73,11 @@ class WebhookPluginTest {
                 result.output()
         );
 
-        verify(restTemplate).exchange(
-                eq("https://example.com/webhook"),
+        verify(restTemplate).execute(
+                eq(URI.create("https://example.com/webhook")),
                 eq(HttpMethod.POST),
-                any(),
-                eq(String.class)
+                any(RequestCallback.class),
+                any(ResponseExtractor.class)
         );
     }
 

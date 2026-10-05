@@ -22,6 +22,7 @@ import com.aryan.conduit.workflow.repository.WorkflowVersionRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Assumptions;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -31,6 +32,7 @@ import org.springframework.core.env.MapPropertySource;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.test.context.ContextConfiguration;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.test.web.servlet.MvcResult;
 
 import java.io.InputStream;
@@ -68,9 +70,16 @@ class CustomPluginWorkflowE2ETest {
     @Autowired TaskOutputService taskOutputService;
     @Autowired PluginManager pluginManager;
     @Autowired MeterRegistry meterRegistry;
+    @Autowired RedisConnectionFactory redisConnectionFactory;
 
     @Test
     void externalPluginJarExecutesThroughWorkflowPipelineWithRetryFailureAndMetrics() throws Exception {
+        try {
+            var connection = redisConnectionFactory.getConnection();
+            try { connection.ping(); } finally { connection.close(); }
+        } catch (RuntimeException unavailable) {
+            Assumptions.assumeTrue(false, "Redis is unavailable for this workflow integration test");
+        }
         assertTrue(pluginManager.getRegisteredPlugins().containsAll(
                 java.util.List.of("HTTP", "SHELL", "LOG", "SLEEP", "FAIL", "CUSTOM_EXAMPLE")));
         JsonNode pluginListing = objectMapper.readTree(mockMvc.perform(get("/api/plugins"))
@@ -135,6 +144,9 @@ class CustomPluginWorkflowE2ETest {
                         .content(objectMapper.writeValueAsBytes(taskRequest)))
                 .andExpect(status().isOk()).andReturn();
         long taskNodeId = Long.parseLong(taskResponse.getResponse().getContentAsString().replace("\"", ""));
+
+        mockMvc.perform(post("/api/workflow-versions/{versionId}/publish", version.getId()))
+                .andExpect(status().isOk());
 
         ExecutionContext context = executionCreationService.createExecutionForVersion(version.getId());
         long workflowExecutionId = context.workflowExecution().getId();

@@ -9,4 +9,5 @@ public enum TaskExecutionStatus {
     SKIPPED,
     TIMEOUT,
     QUEUED,
+    WAITING_FOR_HUMAN,
 }

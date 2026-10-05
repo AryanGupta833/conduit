@@ -9,7 +9,7 @@ docker compose up -d prometheus grafana
 - Prometheus: <http://localhost:9090>
 - Grafana: <http://localhost:3000> (local development login: `admin` / `admin`)
 - Health: <http://localhost:8080/actuator/health>
-- Prometheus scrape endpoint: <http://localhost:8080/actuator/prometheus>
+- Prometheus scrape endpoint: <http://localhost:8080/actuator/prometheus> (protected by a dedicated `CONDUIT_METRICS_TOKEN`; it grants metrics access only. Docker Compose expands it into the Prometheus scrape configuration)
 
 Prometheus scrapes the host application every 15 seconds. Grafana provisions the Prometheus data source and the **Conduit Operations** dashboard automatically.
 

@@ -24,10 +24,26 @@ public class Workflow {
     private LocalDateTime createdAt;
     private String cronExpression;
     private Boolean active;
+    @Column(name = "environment_profile_id")
+    private Long environmentProfileId;
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "owner_id")
+    @JsonIgnore
+    private com.aryan.conduit.security.entity.ConduitUser owner;
     private LocalDateTime lastScheduledRun;
+    @Column(name = "max_concurrent_executions")
+    private Integer maxConcurrentExecutions;
+    @Column(nullable = false)
+    @Builder.Default
+    private Integer priority = 0;
     @OneToMany(mappedBy = "workflow",cascade = CascadeType.ALL)
     @JsonIgnore
     private List<WorkflowVersion> versions;
+
+    @PrePersist
+    private void applyDefaults() {
+        if (priority == null) priority = 0;
+    }
 
 
 }

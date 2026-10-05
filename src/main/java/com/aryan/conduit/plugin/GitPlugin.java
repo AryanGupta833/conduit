@@ -204,6 +204,8 @@ public class GitPlugin implements WorkflowPlugin {
                         configuration,
                         "branch"
                 );
+        String tag = optionalString(configuration, "tag");
+        int depth = configuration.get("depth") instanceof Number n ? n.intValue() : 0;
 
         int timeoutSeconds =
                 getTimeout(configuration);
@@ -214,11 +216,14 @@ public class GitPlugin implements WorkflowPlugin {
         command.add("git");
         command.add("clone");
 
-        if (branch != null && !branch.isBlank()) {
-            validateRef(branch);
+        if (depth > 0) { command.add("--depth"); command.add(String.valueOf(depth)); }
+
+        String pinnedRef = tag != null ? tag : branch;
+        if (pinnedRef != null && !pinnedRef.isBlank()) {
+            validateRef(pinnedRef);
 
             command.add("--branch");
-            command.add(branch);
+            command.add(pinnedRef);
         }
 
         command.add(repository);
@@ -258,6 +263,17 @@ public class GitPlugin implements WorkflowPlugin {
             );
         }
 
+        String expectedCommit = optionalString(configuration, "expectedCommit");
+        String actualCommit = null;
+        if (expectedCommit != null) {
+            ProcessResult rev = runGit(List.of("git", "-C", destination.toString(), "rev-parse", "HEAD"), timeoutSeconds);
+            actualCommit = rev.output().trim();
+            if (rev.exitCode() != 0 || !actualCommit.equalsIgnoreCase(expectedCommit)) {
+                cleanupCloneDestination(destination);
+                return failureResult("CLONE", start, false, rev, "Cloned commit did not match expectedCommit");
+            }
+        }
+
         Map<String, Object> metadata =
                 baseMetadata(
                         "CLONE",
@@ -281,6 +297,10 @@ public class GitPlugin implements WorkflowPlugin {
                     branch
             );
         }
+
+        if (tag != null) metadata.put("tag", tag);
+        if (depth > 0) metadata.put("depth", depth);
+        if (actualCommit != null) metadata.put("commit", actualCommit);
 
         return PluginResult.builder()
                 .success(true)
@@ -581,6 +601,16 @@ public class GitPlugin implements WorkflowPlugin {
         if (branch != null) {
             validateRef(branch);
         }
+
+        String tag = optionalString(configuration, "tag");
+        if (tag != null) validateRef(tag);
+        if (tag != null && branch != null) throw new PluginConfigurationException("Specify either branch or tag, not both");
+        Object depth = configuration.get("depth");
+        if (depth != null && (!(depth instanceof Number n) || n.intValue() < 1 || n.intValue() > 10000))
+            throw new PluginConfigurationException("Git depth must be between 1 and 10000");
+        String expected = optionalString(configuration, "expectedCommit");
+        if (expected != null && !expected.matches("(?i)([0-9a-f]{40}|[0-9a-f]{64})"))
+            throw new PluginConfigurationException("expectedCommit must be a full 40 or 64 character commit hash");
 
         validateRepositoryUrl(
                 configuration
@@ -921,6 +951,7 @@ public class GitPlugin implements WorkflowPlugin {
 
         ProcessBuilder processBuilder =
                 new ProcessBuilder(command);
+        processBuilder.redirectErrorStream(true);
 
         /*
          * Prevent Git's ext:: protocol transport from being
@@ -952,6 +983,7 @@ public class GitPlugin implements WorkflowPlugin {
 
         StringBuilder output =
                 new StringBuilder();
+        java.util.concurrent.atomic.AtomicBoolean outputTruncated = new java.util.concurrent.atomic.AtomicBoolean();
 
         Thread outputReader =
                 Thread.startVirtualThread(() -> {
@@ -964,41 +996,13 @@ public class GitPlugin implements WorkflowPlugin {
                                          )
                                  )) {
 
-                        String line;
-
-                        while ((line = reader.readLine()) != null) {
-
+                        char[] buffer = new char[2048];
+                        int count;
+                        while ((count = reader.read(buffer)) != -1) {
                             synchronized (output) {
-
-                                if (output.length()
-                                        < MAX_OUTPUT_LENGTH) {
-
-                                    int remaining =
-                                            MAX_OUTPUT_LENGTH
-                                                    - output.length();
-
-                                    if (line.length()
-                                            + System.lineSeparator()
-                                            .length()
-                                            <= remaining) {
-
-                                        output.append(line)
-                                                .append(
-                                                        System.lineSeparator()
-                                                );
-
-                                    } else {
-
-                                        output.append(
-                                                line,
-                                                0,
-                                                Math.max(
-                                                        0,
-                                                        remaining
-                                                )
-                                        );
-                                    }
-                                }
+                                int remaining = MAX_OUTPUT_LENGTH - output.length();
+                                if (remaining > 0) output.append(buffer, 0, Math.min(remaining, count));
+                                if (count > remaining) outputTruncated.set(true);
                             }
                         }
 
@@ -1010,14 +1014,19 @@ public class GitPlugin implements WorkflowPlugin {
                     }
                 });
 
-        boolean completed =
-                process.waitFor(
-                        timeoutSeconds,
-                        TimeUnit.SECONDS
-                );
+        boolean completed;
+        try {
+            completed = process.waitFor(timeoutSeconds, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            process.descendants().forEach(ProcessHandle::destroyForcibly);
+            process.destroyForcibly();
+            Thread.currentThread().interrupt();
+            throw e;
+        }
 
         if (!completed) {
 
+            process.descendants().forEach(ProcessHandle::destroy);
             process.destroy();
 
             if (!process.waitFor(
@@ -1025,6 +1034,7 @@ public class GitPlugin implements WorkflowPlugin {
                     TimeUnit.SECONDS
             )) {
                 process.destroyForcibly();
+                process.descendants().forEach(ProcessHandle::destroyForcibly);
             }
 
             throw new TimeoutException(
@@ -1042,7 +1052,8 @@ public class GitPlugin implements WorkflowPlugin {
                 Duration.between(
                         start,
                         Instant.now()
-                ).toMillis()
+                ).toMillis(),
+                outputTruncated.get()
         );
     }
 
@@ -1081,6 +1092,11 @@ public class GitPlugin implements WorkflowPlugin {
         metadata.put(
                 "durationMs",
                 processResult.durationMs()
+        );
+
+        metadata.put(
+                "outputTruncated",
+                processResult.outputTruncated()
         );
 
         return metadata;
@@ -1237,6 +1253,7 @@ public class GitPlugin implements WorkflowPlugin {
     private record ProcessResult(
             int exitCode,
             String output,
-            long durationMs) {
+            long durationMs,
+            boolean outputTruncated) {
     }
 }

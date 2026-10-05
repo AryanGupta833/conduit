@@ -23,6 +23,11 @@ public class SleepPlugin implements WorkflowPlugin {
             Thread.sleep(3000);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
+            return PluginResult.builder()
+                    .success(false)
+                    .output("Sleep interrupted")
+                    .metadata(Map.of("interrupted", true))
+                    .build();
         }
 
         return PluginResult.builder()

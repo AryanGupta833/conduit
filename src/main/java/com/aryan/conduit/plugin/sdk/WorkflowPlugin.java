@@ -8,6 +8,9 @@ public interface WorkflowPlugin {
 
     PluginResult execute(PluginContext context) throws Exception;
 
+    /** True when this plugin durably suspends its task instead of completing it. */
+    default boolean suspendsExecution() { return false; }
+
     /** Plugin-owned configuration validation; throw a readable exception for invalid input. */
     default void validateConfiguration(Map<String, Object> configuration) throws PluginConfigurationException { }
 }

@@ -35,6 +35,7 @@ public class ExecutionSummaryService
 
         return ExecutionSummaryResponse.builder()
                 .workflowExecutionId(workflowExecution.getId())
+                .correlationId(workflowExecution.getCorrelationId())
                 .workflowId(workflowExecution.getWorkflowVersion().getWorkflow().getId())
                 .workflowVersionId(workflowExecution.getWorkflowVersion().getId())
                 .versionNumber(workflowExecution.getVersionNumber())

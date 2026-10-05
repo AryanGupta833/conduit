@@ -1,0 +1,128 @@
+{
+  "schemaVersion": 1,
+  "name": "SFTP Dual-Feed Reconciliation",
+  "cronExpression": null,
+  "tasks": [
+    {
+      "name": "downloadOrders",
+      "displayName": "Download Partner Orders",
+      "pluginType": "SFTP",
+      "configurationJson": "{\"operation\":\"DOWNLOAD\",\"host\":\"sftp.example.com\",\"port\":22,\"username\":\"replace-with-partner-user\",\"password\":{\"$credential\":\"partner-sftp-password\"},\"hostKeyFingerprint\":\"SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\",\"remotePath\":\"/feeds/orders.json\",\"localPath\":\"reconcile/orders.json\",\"maxBytes\":26214400,\"timeoutSeconds\":20,\"overwrite\":true}",
+      "timeoutSeconds": 60,
+      "maxRetries": 2,
+      "joinCondition": "ALL_PARENTS",
+      "xPosition": 100,
+      "yPosition": 140
+    },
+    {
+      "name": "downloadInventory",
+      "displayName": "Download Partner Inventory",
+      "pluginType": "SFTP",
+      "configurationJson": "{\"operation\":\"DOWNLOAD\",\"host\":\"sftp.example.com\",\"port\":22,\"username\":\"replace-with-partner-user\",\"password\":{\"$credential\":\"partner-sftp-password\"},\"hostKeyFingerprint\":\"SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\",\"remotePath\":\"/feeds/inventory.json\",\"localPath\":\"reconcile/inventory.json\",\"maxBytes\":26214400,\"timeoutSeconds\":20,\"overwrite\":true}",
+      "timeoutSeconds": 60,
+      "maxRetries": 2,
+      "joinCondition": "ALL_PARENTS",
+      "xPosition": 100,
+      "yPosition": 400
+    },
+    {
+      "name": "readOrders",
+      "displayName": "Read Orders Feed",
+      "pluginType": "FILE_READ",
+      "configurationJson": "{\"workspaceRoot\":\".\",\"path\":\"reconcile/orders.json\",\"encoding\":\"UTF-8\"}",
+      "timeoutSeconds": 30,
+      "maxRetries": 0,
+      "joinCondition": "ALL_PARENTS",
+      "xPosition": 380,
+      "yPosition": 140
+    },
+    {
+      "name": "readInventory",
+      "displayName": "Read Inventory Feed",
+      "pluginType": "FILE_READ",
+      "configurationJson": "{\"workspaceRoot\":\".\",\"path\":\"reconcile/inventory.json\",\"encoding\":\"UTF-8\"}",
+      "timeoutSeconds": 30,
+      "maxRetries": 0,
+      "joinCondition": "ALL_PARENTS",
+      "xPosition": 380,
+      "yPosition": 400
+    },
+    {
+      "name": "validateOrders",
+      "displayName": "Validate Orders JSON",
+      "pluginType": "JSON_TRANSFORM",
+      "configurationJson": "{\"operation\":\"PARSE\",\"input\":\"${tasks.readOrders.output}\"}",
+      "timeoutSeconds": 30,
+      "maxRetries": 0,
+      "joinCondition": "ALL_PARENTS",
+      "xPosition": 660,
+      "yPosition": 140
+    },
+    {
+      "name": "validateInventory",
+      "displayName": "Validate Inventory JSON",
+      "pluginType": "JSON_TRANSFORM",
+      "configurationJson": "{\"operation\":\"PARSE\",\"input\":\"${tasks.readInventory.output}\"}",
+      "timeoutSeconds": 30,
+      "maxRetries": 0,
+      "joinCondition": "ALL_PARENTS",
+      "xPosition": 660,
+      "yPosition": 400
+    },
+    {
+      "name": "reviewFeeds",
+      "displayName": "Review Both Partner Feeds",
+      "pluginType": "HUMAN_TASK",
+      "configurationJson": "{\"type\":\"APPROVAL\",\"title\":\"Review partner order and inventory feeds\",\"description\":\"Compare both committed feed outputs and reconcile totals before approval. Approving uploads both source files to the reconciled archive.\",\"timeoutSeconds\":86400,\"timeoutPolicy\":\"REJECT\",\"reminderAfterSeconds\":3600}",
+      "timeoutSeconds": 86400,
+      "maxRetries": 0,
+      "joinCondition": "ALL_PARENTS",
+      "xPosition": 960,
+      "yPosition": 270
+    },
+    {
+      "name": "archiveOrders",
+      "displayName": "Archive Reconciled Orders",
+      "pluginType": "SFTP",
+      "configurationJson": "{\"operation\":\"UPLOAD\",\"host\":\"sftp.example.com\",\"port\":22,\"username\":\"replace-with-partner-user\",\"password\":{\"$credential\":\"partner-sftp-password\"},\"hostKeyFingerprint\":\"SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\",\"remotePath\":\"/archive/reconciled/orders.json\",\"localPath\":\"reconcile/orders.json\",\"maxBytes\":26214400,\"timeoutSeconds\":20,\"overwrite\":true}",
+      "timeoutSeconds": 60,
+      "maxRetries": 2,
+      "joinCondition": "ALL_PARENTS",
+      "xPosition": 1260,
+      "yPosition": 150
+    },
+    {
+      "name": "archiveInventory",
+      "displayName": "Archive Reconciled Inventory",
+      "pluginType": "SFTP",
+      "configurationJson": "{\"operation\":\"UPLOAD\",\"host\":\"sftp.example.com\",\"port\":22,\"username\":\"replace-with-partner-user\",\"password\":{\"$credential\":\"partner-sftp-password\"},\"hostKeyFingerprint\":\"SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\",\"remotePath\":\"/archive/reconciled/inventory.json\",\"localPath\":\"reconcile/inventory.json\",\"maxBytes\":26214400,\"timeoutSeconds\":20,\"overwrite\":true}",
+      "timeoutSeconds": 60,
+      "maxRetries": 2,
+      "joinCondition": "ALL_PARENTS",
+      "xPosition": 1260,
+      "yPosition": 400
+    },
+    {
+      "name": "reconciliationRejected",
+      "displayName": "Record Reconciliation Rejection",
+      "pluginType": "FILE_WRITE",
+      "configurationJson": "{\"workspaceRoot\":\".\",\"path\":\"reconcile/rejected.txt\",\"content\":\"Partner order and inventory feed reconciliation was rejected for correction.\"}",
+      "timeoutSeconds": 30,
+      "maxRetries": 0,
+      "joinCondition": "ALL_PARENTS",
+      "xPosition": 1260,
+      "yPosition": 530
+    }
+  ],
+  "dependencies": [
+    { "parentTask": "downloadOrders", "childTask": "readOrders", "condition": "ON_SUCCESS", "expression": null },
+    { "parentTask": "downloadInventory", "childTask": "readInventory", "condition": "ON_SUCCESS", "expression": null },
+    { "parentTask": "readOrders", "childTask": "validateOrders", "condition": "ON_SUCCESS", "expression": null },
+    { "parentTask": "readInventory", "childTask": "validateInventory", "condition": "ON_SUCCESS", "expression": null },
+    { "parentTask": "validateOrders", "childTask": "reviewFeeds", "condition": "ON_SUCCESS", "expression": null },
+    { "parentTask": "validateInventory", "childTask": "reviewFeeds", "condition": "ON_SUCCESS", "expression": null },
+    { "parentTask": "reviewFeeds", "childTask": "archiveOrders", "condition": "ON_SUCCESS", "expression": null },
+    { "parentTask": "reviewFeeds", "childTask": "archiveInventory", "condition": "ON_SUCCESS", "expression": null },
+    { "parentTask": "reviewFeeds", "childTask": "reconciliationRejected", "condition": "ON_FAILURE", "expression": null }
+  ]
+}

@@ -6,7 +6,8 @@ import jakarta.persistence.*;
 import lombok.*;
 
 @Entity
-@Table(name="task_nodes")
+@Table(name="task_nodes", uniqueConstraints = @UniqueConstraint(
+        name = "uk_task_node_version_name", columnNames = {"workflow_version_id", "name"}))
 @Getter
 @Setter
 @NoArgsConstructor

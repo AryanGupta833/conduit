@@ -2,6 +2,8 @@ package com.aryan.conduit.plugin;
 
 import com.aryan.conduit.plugin.sdk.PluginConfigurationException;
 import com.aryan.conduit.plugin.sdk.PluginContext;
+import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
+import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.junit.jupiter.api.Test;
 
 import java.util.Map;
@@ -10,6 +12,12 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 class RedisPluginTest {
 
@@ -199,5 +207,20 @@ class RedisPluginTest {
                 "test",
                 result.metadata().get("key")
         );
+    }
+
+    @Test
+    void destroysTemporaryConnectionFactoryWhenOperationFails() {
+        RedisPlugin localPlugin = spy(new RedisPlugin());
+        LettuceConnectionFactory factory = mock(LettuceConnectionFactory.class);
+        doReturn(factory).when(localPlugin)
+                .createTemporaryConnectionFactory(any(RedisStandaloneConfiguration.class));
+        when(factory.getConnection()).thenThrow(new IllegalStateException("connection failed"));
+        PluginContext context = new PluginContext("redis-test", 30,
+                Map.of("host", "localhost", "operation", "GET", "key", "test"), Map.of());
+
+        assertFalse(localPlugin.execute(context).isSuccess());
+
+        verify(factory).destroy();
     }
 }

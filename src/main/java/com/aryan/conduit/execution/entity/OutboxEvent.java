@@ -24,6 +24,10 @@ public class OutboxEvent {
     @Column(nullable = false)
     private Long aggregateId;
 
+    @Column(nullable = false)
+    @Builder.Default
+    private Integer priority = 0;
+
     @Column(columnDefinition = "TEXT", nullable = false)
     private String payload;
 
@@ -36,4 +40,7 @@ public class OutboxEvent {
     private LocalDateTime createdAt;
 
     private LocalDateTime publishedAt;
+
+    @Column(columnDefinition = "TEXT")
+    private String lastError;
 }

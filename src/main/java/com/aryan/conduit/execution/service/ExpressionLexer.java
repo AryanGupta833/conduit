@@ -15,9 +15,13 @@ public class ExpressionLexer {
     }
 
     public List<Token> tokenize() {
+        if (input == null || input.length() > 2048) {
+            throw new IllegalArgumentException("Expression is empty or exceeds the 2048 character limit");
+        }
         List<Token> tokens = new ArrayList<>();
 
         while (!isAtEnd()) {
+            if (tokens.size() >= 256) throw new IllegalArgumentException("Expression exceeds the 256 token limit");
             char current = peek();
 
             if (current == '"') {
@@ -145,7 +149,7 @@ public class ExpressionLexer {
         while (!isAtEnd()) {
             char current = peek();
 
-            if (Character.isLetterOrDigit(current) || current == '_' || current == '.') {
+            if (Character.isLetterOrDigit(current) || current == '_' || current == '.' || current == '-') {
                 builder.append(advance());
             } else {
                 break;
@@ -160,22 +164,28 @@ public class ExpressionLexer {
         if(value.equals("false")){
             return new Token(TokenType.FALSE,value);
         }
+        if(value.equals("null")){
+            return new Token(TokenType.NULL,value);
+        }
         return new Token(TokenType.IDENTIFIER,value);
 
 
     }
     private Token readNumber(){
         StringBuilder builder=new StringBuilder();
+        boolean decimal = false;
 
         while (!isAtEnd()){
             char current=peek();
-            if(Character.isDigit(current)||current=='.'){
+            if(Character.isDigit(current)||(current=='.' && !decimal)){
+                if (current == '.') decimal = true;
                 builder.append(advance());
             }
             else{
                 break;
             }
         }
+        if (builder.isEmpty() || builder.toString().equals(".")) throw new IllegalArgumentException("Invalid number literal");
         return new Token(TokenType.NUMBER, builder.toString());
     }
 
@@ -190,7 +200,14 @@ public class ExpressionLexer {
         advance();
         StringBuilder builder=new StringBuilder();
         while (!isAtEnd()&&peek()!='"'){
-            builder.append(advance());
+            char next = advance();
+            if (next == '\\') {
+                if (isAtEnd()) throw new IllegalArgumentException("Invalid escape in string literal");
+                char escaped = advance();
+                next = switch (escaped) { case 'n' -> '\n'; case 'r' -> '\r'; case 't' -> '\t'; case '"' -> '"'; case '\\' -> '\\'; default -> throw new IllegalArgumentException("Unsupported string escape"); };
+            }
+            builder.append(next);
+            if (builder.length() > 1024) throw new IllegalArgumentException("Expression string literal exceeds 1024 characters");
         }
         if(isAtEnd()){
             throw new RuntimeException("Unterminated string literal");

@@ -6,6 +6,7 @@ import com.aryan.conduit.workflow.dto.BinaryNode;
 import com.aryan.conduit.workflow.dto.LiteralNode;
 import com.aryan.conduit.workflow.dto.Token;
 import com.aryan.conduit.workflow.dto.VariableNode;
+import com.aryan.conduit.workflow.dto.UnaryNode;
 
 import java.util.List;
 
@@ -31,7 +32,9 @@ public class ExpressionParser {
     }
 
     public ExpressionNode parse(){
-        return expression();
+        ExpressionNode parsed = expression();
+        if (peek().type() != TokenType.EOF) throw new IllegalArgumentException("Unexpected trailing expression input");
+        return parsed;
     }
 
     private ExpressionNode expression(){
@@ -100,6 +103,8 @@ public class ExpressionParser {
     private ExpressionNode primary(){
         Token token=advance();
         switch (token.type()){
+            case NOT -> { return new UnaryNode("!", primary()); }
+            case NULL -> { return new LiteralNode(null); }
             case NUMBER -> {
                 return new LiteralNode(Double.parseDouble(token.value()));
             }

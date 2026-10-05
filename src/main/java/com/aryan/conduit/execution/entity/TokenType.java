@@ -6,6 +6,7 @@ public enum TokenType {
     STRING,
     TRUE,
     FALSE,
+    NULL,
     EQ,
     NE,
     GT,

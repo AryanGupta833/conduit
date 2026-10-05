@@ -3,6 +3,7 @@ HELP.md
 .env.*
 !.env.example
 target/
+/conduit-workspaces/
 .mvn/wrapper/maven-wrapper.jar
 !**/src/main/**/target/
 !**/src/test/**/target/

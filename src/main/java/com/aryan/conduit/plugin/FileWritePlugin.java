@@ -168,6 +168,16 @@ public class FileWritePlugin implements WorkflowPlugin {
                 );
 
         try {
+            Charset charset = Charset.forName(encoding);
+            if (context.workspace() != null) {
+                byte[] bytes = content.getBytes(charset);
+                long written = context.workspace().writeAtomic(relativePath,
+                        new java.io.ByteArrayInputStream(bytes), overwrite, createDirectories);
+                return PluginResult.builder().success(true).output("File written successfully")
+                        .metadata(Map.of("operation", "WRITE", "path", relativePath,
+                                "sizeBytes", written, "encoding", charset.name(), "overwrite", overwrite))
+                        .build();
+            }
             Path root =
                     Paths.get(workspaceRoot)
                             .toAbsolutePath()
@@ -206,9 +216,6 @@ public class FileWritePlugin implements WorkflowPlugin {
                                 + file.getParent()
                 );
             }
-
-            Charset charset =
-                    Charset.forName(encoding);
 
             if (overwrite) {
                 Files.writeString(

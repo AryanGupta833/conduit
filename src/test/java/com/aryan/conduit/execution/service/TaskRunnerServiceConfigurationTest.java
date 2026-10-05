@@ -26,6 +26,8 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.argThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.when;
 
 class TaskRunnerServiceConfigurationTest {
@@ -208,5 +210,9 @@ class TaskRunnerServiceConfigurationTest {
                 .execute(
                         argThat(context -> context.configuration().get("url").equals("https://example.com/users/42"))
                 );
+
+        // TaskResultHandler owns the atomic SUCCESS + coordinator transition;
+        // TaskRunner must leave success uncommitted until that durable boundary.
+        verify(taskExecutionService, never()).markSuccess(taskExecutionId);
     }
 }

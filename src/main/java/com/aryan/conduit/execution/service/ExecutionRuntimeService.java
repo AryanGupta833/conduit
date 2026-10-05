@@ -9,6 +9,7 @@ import com.aryan.conduit.workflow.repository.DependencyRepository;
 import com.aryan.conduit.workflow.service.WorkflowGraphService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Autowired;
 
 import java.util.List;
 import java.util.Map;
@@ -20,6 +21,10 @@ public class ExecutionRuntimeService {
     private final WorkflowGraphService workflowGraphService;
     private final ExpressionEvaluator expressionEvaluator;
     private final ExpressionContextService expressionContextService;
+    private com.aryan.conduit.observability.ConduitMetrics metrics;
+
+    @Autowired(required = false)
+    void setMetrics(com.aryan.conduit.observability.ConduitMetrics metrics) { this.metrics = metrics; }
 
 
 
@@ -165,18 +170,19 @@ public class ExecutionRuntimeService {
     private boolean isDependencySatisfied(Long workflowExecutionId,Dependency dependency,Map<Long,TaskExecutionStatus> taskStatuses){
         Long parentId=dependency.getParent().getId();
         TaskExecutionStatus parentStatus=taskStatuses.get(parentId);
-        if(parentStatus==null){
+        if(parentStatus==null || !isTerminal(parentStatus)){
             return false;
         }
         switch (dependency.getCondition()){
-            case ALWAYS :
-                return parentStatus==TaskExecutionStatus.SUCCESS;
+            case ALWAYS, ON_COMPLETION:
+                return true;
 
             case ON_SUCCESS:
                 return parentStatus==TaskExecutionStatus.SUCCESS;
 
             case ON_FAILURE:
-                return parentStatus==TaskExecutionStatus.FAILED;
+                return parentStatus == TaskExecutionStatus.FAILED
+                        || parentStatus == TaskExecutionStatus.TIMEOUT;
 
             case EXPRESSION:
 
@@ -188,20 +194,9 @@ public class ExecutionRuntimeService {
                 String expression =
                         dependency.getExpression();
 
-                ExpressionLexer lexer =
-                        new ExpressionLexer(expression);
-
-                ExpressionParser parser =
-                        new ExpressionParser(
-                                lexer.tokenize()
-                        );
-
-                ExpressionNode ast =
-                        parser.parse();
-
                 Object result =
                         expressionEvaluator.evaluate(
-                                ast,
+                                expression,
                                 variables
                         );
 
@@ -212,7 +207,9 @@ public class ExecutionRuntimeService {
                     );
                 }
 
-                return (Boolean) result;
+                boolean matched = (Boolean) result;
+                if (metrics != null) metrics.conditionalBranch(matched);
+                return matched;
             default:
                 return false;
         }

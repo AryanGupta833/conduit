@@ -21,6 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.AdditionalMatchers.aryEq;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -301,6 +302,34 @@ class TaskQueueServiceRecoveryTest {
                         eq(Duration.ofSeconds(30)),
                         eq(RecordId.of("3-0"))
                 );
+    }
+
+    @Test
+    void shouldNotClaimMoreStaleMessagesThanRecoveryBatchCanReturn() {
+        PendingMessage staleOne = stalePending("1-0", Duration.ofSeconds(45));
+        PendingMessage staleTwo = stalePending("2-0", Duration.ofSeconds(45));
+        PendingMessage staleThree = mock(PendingMessage.class);
+        PendingMessages firstPage = new PendingMessages(
+                CONSUMER_GROUP,
+                List.of(staleOne, staleTwo, staleThree)
+        );
+        when(streamOperations.pending(
+                eq(TASK_STREAM), eq(CONSUMER_GROUP), any(Range.class), anyLong()
+        )).thenReturn(firstPage).thenReturn(null);
+
+        RecordId firstId = RecordId.of("1-0");
+        RecordId secondId = RecordId.of("2-0");
+        when(streamOperations.claim(
+                eq(TASK_STREAM), eq(CONSUMER_GROUP), eq("recovery-worker"),
+                eq(Duration.ofSeconds(30)), any(RecordId[].class)
+        )).thenReturn(List.of());
+
+        taskQueueService.recover("recovery-worker", Duration.ofSeconds(30), 2);
+
+        verify(streamOperations).claim(
+                eq(TASK_STREAM), eq(CONSUMER_GROUP), eq("recovery-worker"),
+                eq(Duration.ofSeconds(30)), aryEq(new RecordId[]{firstId, secondId})
+        );
     }
 
     private PendingMessage freshPending(

@@ -9,6 +9,7 @@ import org.mockito.Mockito;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.when;
 
 public class ConfigurationResolverTest {
@@ -41,16 +42,19 @@ public class ConfigurationResolverTest {
                 )
         ).thenReturn(
                 Map.of(
-                        "userId", 42,
-                        "token", "abc123"
+                        "variables", Map.of("userId", 42, "requestId", "a/b?x=1&y=2"),
+                        "tasks", Map.of("fetchUser", Map.of("output", Map.of("userId", 42)))
                 )
         );
 
         String config =
                 """
                 {
-                    "url": "https://example.com/users/${userId}",
-                    "token": "${token}"
+                    "url": "https://example.com/users/${variables.userId}",
+                    "timeout": 30,
+                    "enabled": true,
+                    "headers": {"X-Request": "${variables.requestId}"},
+                    "resultId": "${tasks.fetchUser.output.userId}"
                 }
                 """;
 
@@ -67,12 +71,11 @@ public class ConfigurationResolverTest {
                         .asText()
         );
 
-        assertEquals(
-                "abc123",
-                objectMapper.readTree(resolved)
-                        .get("token")
-                        .asText()
-        );
+        var json = objectMapper.readTree(resolved);
+        assertEquals(30, json.get("timeout").asInt());
+        assertEquals(true, json.get("enabled").asBoolean());
+        assertEquals("a/b?x=1&y=2", json.path("headers").path("X-Request").asText());
+        assertEquals(42, json.get("resultId").asInt());
     }
     @Test
     void shouldResolveNestedTaskOutput() throws JsonProcessingException {
@@ -83,24 +86,16 @@ public class ConfigurationResolverTest {
                 )
         ).thenReturn(
                 Map.of(
-                        "fetchUser",
-                        Map.of(
-                                "success", true,
-                                "output",
-                                Map.of(
-                                        "userId", 42,
-                                        "email",
-                                        "user@example.com"
-                                )
-                        )
+                        "tasks", Map.of("fetchUser", Map.of("output", Map.of(
+                                "userId", 42, "email", "user@example.com")))
                 )
         );
 
         String config =
                 """
                 {
-                    "url": "https://example.com/users/${fetchUser.output.userId}",
-                    "email": "${fetchUser.output.email}"
+                    "url": "https://example.com/users/${tasks.fetchUser.output.userId}",
+                    "email": "${tasks.fetchUser.output.email}"
                 }
                 """;
 
@@ -123,5 +118,16 @@ public class ConfigurationResolverTest {
                         .get("email")
                         .asText()
         );
+    }
+
+    @Test
+    void rejectsMissingNullSecretAndExecutablePaths() {
+        when(expressionContextService.buildContext(workflowExecutionId)).thenReturn(Map.of(
+                "variables", java.util.Collections.singletonMap("nullable", null)));
+        assertThrows(IllegalArgumentException.class, () -> configurationResolver.resolve(workflowExecutionId, "{\"x\":\"${variables.missing}\"}"));
+        assertThrows(IllegalArgumentException.class, () -> configurationResolver.resolve(workflowExecutionId, "{\"x\":\"${variables.nullable}\"}"));
+        assertThrows(IllegalArgumentException.class, () -> configurationResolver.resolve(workflowExecutionId, "{\"x\":\"${variables.password}\"}"));
+        assertThrows(IllegalArgumentException.class, () -> configurationResolver.resolve(workflowExecutionId, "{\"x\":\"${T(java.lang.Runtime).getRuntime()}\"}"));
+        assertThrows(IllegalArgumentException.class, () -> configurationResolver.resolve(workflowExecutionId, "{\"x\":\"${variables.missing\"}"));
     }
 }

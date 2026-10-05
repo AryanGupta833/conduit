@@ -16,6 +16,20 @@ class BatchOnePluginTest {
             new ObjectMapper();
 
     @Test
+    void sleepReportsInterruptionAsFailureAndPreservesInterruptFlag() {
+        Thread.currentThread().interrupt();
+        try {
+            PluginResult result = new SleepPlugin().execute(
+                    new PluginContext("sleep", 30, Map.of(), Map.of()));
+            assertFalse(result.success());
+            assertEquals(true, result.metadata().get("interrupted"));
+            assertTrue(Thread.currentThread().isInterrupted());
+        } finally {
+            Thread.interrupted();
+        }
+    }
+
+    @Test
     void setVariablesShouldMergeVariables() {
 
         SetVariablesPlugin plugin =

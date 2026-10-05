@@ -1,8 +1,5 @@
 package com.aryan.conduit.trigger;
 
-import com.aryan.conduit.execution.entity.WorkflowExecution;
-import com.aryan.conduit.execution.service.ExecutionCreationService;
-import com.aryan.conduit.workflow.dto.ExecutionContext;
 import com.aryan.conduit.workflow.service.WorkflowExecutionAsyncService;
 import org.junit.jupiter.api.Test;
 
@@ -14,42 +11,27 @@ class WorkflowTriggerServiceTest {
     @Test
     void shouldCreateExecutionAndStartAsyncExecution() {
 
-        ExecutionCreationService executionCreationService =
-                mock(ExecutionCreationService.class);
+        WorkflowTriggerInboxService inboxService =
+                mock(WorkflowTriggerInboxService.class);
 
         WorkflowExecutionAsyncService asyncService =
                 mock(WorkflowExecutionAsyncService.class);
 
         WorkflowTriggerService triggerService =
                 new WorkflowTriggerService(
-                        executionCreationService,
+                        inboxService,
                         asyncService
                 );
 
-        WorkflowExecution workflowExecution =
-                WorkflowExecution.builder()
-                        .id(100L)
-                        .build();
-
-        ExecutionContext context =
-                new ExecutionContext(
-                        workflowExecution,
-                        java.util.List.of(),
-                        java.util.Map.of()
-                );
-
-        when(
-                executionCreationService.createExecution(10L)
-        ).thenReturn(context);
+        WorkflowTriggerEvent event = new WorkflowTriggerEvent(10L);
+        when(inboxService.getOrCreateExecution(event.eventId(), 10L)).thenReturn(100L);
 
         Long executionId =
-                triggerService.triggerWorkflow(10L);
+                triggerService.triggerWorkflow(event);
 
         assertEquals(100L, executionId);
 
-        verify(
-                executionCreationService
-        ).createExecution(10L);
+        verify(inboxService).getOrCreateExecution(event.eventId(), 10L);
 
         verify(
                 asyncService

@@ -25,7 +25,22 @@ public class ConduitMetrics {
         safe(() -> Gauge.builder("conduit.workflow.active.executions", activeWorkflows, AtomicLong::get).register(registry));
         safe(() -> Gauge.builder("conduit.task.queue.stream.entries", queueStreamEntries, AtomicLong::get).register(registry));
         safe(() -> Gauge.builder("conduit.task.queue.pending", queuePending, AtomicLong::get).register(registry));
+        safe(() -> Gauge.builder("conduit.human.tasks.waiting", this, ignored -> waitingHumanTasks())
+                .description("Human task requests currently waiting for a response")
+                .register(registry));
     }
+
+    private volatile java.util.function.LongSupplier waitingHumanTaskSupplier = () -> 0L;
+    public void setWaitingHumanTaskSupplier(java.util.function.LongSupplier supplier) {
+        if (supplier != null) waitingHumanTaskSupplier = supplier;
+    }
+    private double waitingHumanTasks() {
+        try { return Math.max(0L, waitingHumanTaskSupplier.getAsLong()); }
+        catch (RuntimeException ignored) { return 0L; }
+    }
+    public void humanTaskCreated() { safe(() -> registry.counter("conduit.human.tasks.created").increment()); }
+    public void humanTaskCompleted(String status) { safe(() -> registry.counter("conduit.human.tasks.completed", "status", normalize(status)).increment()); }
+    public void humanTaskExpired() { safe(() -> registry.counter("conduit.human.tasks.expired").increment()); }
 
     public void workflowStarted() {
         safe(() -> {
@@ -55,6 +70,45 @@ public class ConduitMetrics {
 
     public void taskRetry(String pluginType) {
         safe(() -> registry.counter("conduit.task.retries", "plugin_type", normalizePluginType(pluginType)).increment());
+    }
+
+    public void pluginOutputTruncated(String pluginType) {
+        safe(() -> registry.counter("conduit.plugin.output.truncated", "plugin_type", normalizePluginType(pluginType)).increment());
+    }
+
+    public void pluginBytes(String pluginType, String direction, long bytes) {
+        if (bytes <= 0) return;
+        safe(() -> registry.counter("conduit.plugin.bytes", "plugin_type", normalizePluginType(pluginType),
+                "direction", normalize(direction)).increment(bytes));
+    }
+
+    public void pluginResourceFailure(String pluginType, String resource) {
+        safe(() -> registry.counter("conduit.plugin.resource.failures", "plugin_type", normalizePluginType(pluginType),
+                "resource", normalize(resource)).increment());
+    }
+
+    public void executionContextUpdated() {
+        safe(() -> registry.counter("conduit.execution.context.updates").increment());
+    }
+
+    public void executionContextUpdateFailed() {
+        safe(() -> registry.counter("conduit.execution.context.update.failures").increment());
+    }
+
+    public void expressionEvaluated(boolean success) {
+        safe(() -> registry.counter("conduit.execution.expression.evaluations", "outcome", success ? "success" : "failure").increment());
+    }
+
+    public void configurationInterpolation(boolean success) {
+        safe(() -> registry.counter("conduit.execution.configuration.interpolations", "outcome", success ? "success" : "failure").increment());
+    }
+
+    public void conditionalBranch(boolean matched) {
+        safe(() -> registry.counter("conduit.execution.branches.evaluated", "outcome", matched ? "matched" : "not_matched").increment());
+    }
+
+    public void conditionalBranchSkipped() {
+        safe(() -> registry.counter("conduit.execution.branches.skipped").increment());
     }
 
     public void setActiveWorkflows(long value) { safe(() -> activeWorkflows.set(Math.max(0, value))); }

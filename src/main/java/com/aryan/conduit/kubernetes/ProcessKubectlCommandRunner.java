@@ -17,8 +17,8 @@ class ProcessKubectlCommandRunner implements KubectlCommandRunner {
         try {
             process = new ProcessBuilder(command).start();
             Process running = process;
-            StringBuilder stdout = new StringBuilder();
-            StringBuilder stderr = new StringBuilder();
+            BoundedCapture stdout = new BoundedCapture();
+            BoundedCapture stderr = new BoundedCapture();
             Thread outReader = reader(running.getInputStream(), stdout);
             Thread errReader = reader(running.getErrorStream(), stderr);
             outReader.start();
@@ -27,31 +27,49 @@ class ProcessKubectlCommandRunner implements KubectlCommandRunner {
                 if (stdin != null) input.write(stdin.getBytes(StandardCharsets.UTF_8));
             }
             if (!process.waitFor(timeout.toMillis(), TimeUnit.MILLISECONDS)) {
+                process.descendants().forEach(ProcessHandle::destroyForcibly);
                 process.destroyForcibly();
                 outReader.join(1000);
                 errReader.join(1000);
-                return new CommandResult(-1, stdout.toString(), stderr.toString(), true);
+                return new CommandResult(-1, stdout.toString(), stderr.toString(), true, stdout.truncated || stderr.truncated);
             }
             outReader.join();
             errReader.join();
-            return new CommandResult(process.exitValue(), stdout.toString(), stderr.toString(), false);
+            return new CommandResult(process.exitValue(), stdout.toString(), stderr.toString(), false, stdout.truncated || stderr.truncated);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            if (process != null) process.destroyForcibly();
+            if (process != null) { process.descendants().forEach(ProcessHandle::destroyForcibly); process.destroyForcibly(); }
             throw new IllegalStateException("kubectl command was interrupted", e);
         } catch (Exception e) {
-            if (process != null) process.destroyForcibly();
+            if (process != null) { process.descendants().forEach(ProcessHandle::destroyForcibly); process.destroyForcibly(); }
             throw new IllegalStateException("kubectl command failed to start or complete", e);
         }
     }
 
-    private Thread reader(InputStream stream, StringBuilder destination) {
-        return new Thread(() -> {
+    private Thread reader(InputStream stream, BoundedCapture destination) {
+        Thread thread = new Thread(() -> {
             try (stream) {
-                destination.append(new String(stream.readAllBytes(), StandardCharsets.UTF_8));
+                byte[] buffer = new byte[4096];
+                int count;
+                while ((count = stream.read(buffer)) != -1) destination.append(buffer, count);
             } catch (Exception e) {
-                destination.append(e.getMessage());
+                byte[] failure = ("[stream read failed: " + e.getClass().getSimpleName() + "]").getBytes(StandardCharsets.UTF_8);
+                destination.append(failure, failure.length);
             }
-        });
+        }, "kubectl-output-reader");
+        thread.setDaemon(true);
+        return thread;
+    }
+
+    private static final class BoundedCapture {
+        private static final int LIMIT = 64 * 1024;
+        private final java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream();
+        private volatile boolean truncated;
+        synchronized void append(byte[] value, int length) {
+            int room = LIMIT - bytes.size();
+            if (room > 0) bytes.write(value, 0, Math.min(room, length));
+            if (length > room) truncated = true;
+        }
+        @Override public synchronized String toString() { return bytes.toString(StandardCharsets.UTF_8) + (truncated ? "\n[output truncated]" : ""); }
     }
 }

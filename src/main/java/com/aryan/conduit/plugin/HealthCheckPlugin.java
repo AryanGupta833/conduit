@@ -18,6 +18,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import com.aryan.conduit.plugin.security.SsrfAddressPolicy;
 
 @Component
 public class HealthCheckPlugin implements WorkflowPlugin {
@@ -57,6 +58,8 @@ public class HealthCheckPlugin implements WorkflowPlugin {
                     "HEALTH_CHECK configuration is required"
             );
         }
+        if (configuration.get("allowPrivateNetwork") != null && !(configuration.get("allowPrivateNetwork") instanceof Boolean))
+            throw new PluginConfigurationException("HEALTH_CHECK 'allowPrivateNetwork' must be a boolean");
 
         String type = requireString(
                 configuration,
@@ -137,7 +140,7 @@ public class HealthCheckPlugin implements WorkflowPlugin {
             );
         }
 
-        validateHttpUri(uri);
+        validateHttpUri(uri, Boolean.TRUE.equals(configuration.get("allowPrivateNetwork")));
 
         /*
          * Create the client with the same timeout configured for this
@@ -145,7 +148,7 @@ public class HealthCheckPlugin implements WorkflowPlugin {
          * request timeout consistent.
          */
         HttpClient httpClient = HttpClient.newBuilder()
-                .followRedirects(HttpClient.Redirect.NORMAL)
+                .followRedirects(HttpClient.Redirect.NEVER)
                 .connectTimeout(
                         Duration.ofSeconds(timeoutSeconds)
                 )
@@ -159,12 +162,12 @@ public class HealthCheckPlugin implements WorkflowPlugin {
 
         Instant start = Instant.now();
 
-        HttpResponse<String> response;
+        HttpResponse<java.io.InputStream> response;
 
         try {
             response = httpClient.send(
                     request,
-                    HttpResponse.BodyHandlers.ofString()
+                    HttpResponse.BodyHandlers.ofInputStream()
             );
         } catch (InterruptedException ex) {
             Thread.currentThread().interrupt();
@@ -177,6 +180,8 @@ public class HealthCheckPlugin implements WorkflowPlugin {
         ).toMillis();
 
         int statusCode = response.statusCode();
+        byte[] bodyBytes;
+        try (var bodyStream = response.body()) { bodyBytes = bodyStream.readNBytes(MAX_RESPONSE_BODY_CHARS + 1); }
 
         boolean healthy = statusCode == expectedStatus;
 
@@ -212,8 +217,10 @@ public class HealthCheckPlugin implements WorkflowPlugin {
                 "latencyMs",
                 latencyMs
         );
+        metadata.put("outputTruncated", bodyBytes.length > MAX_RESPONSE_BODY_CHARS);
 
-        String body = response.body();
+        String body = new String(bodyBytes, java.nio.charset.StandardCharsets.UTF_8);
+        if (bodyBytes.length > MAX_RESPONSE_BODY_CHARS) body = truncateBody(body);
 
         if (body != null && !body.isBlank()) {
             metadata.put(
@@ -268,6 +275,7 @@ public class HealthCheckPlugin implements WorkflowPlugin {
         long start = System.nanoTime();
 
         try {
+            SsrfAddressPolicy.validateHost(host, Boolean.TRUE.equals(configuration.get("allowPrivateNetwork")));
             InetSocketAddress address =
                     new InetSocketAddress(host, port);
 
@@ -378,7 +386,7 @@ public class HealthCheckPlugin implements WorkflowPlugin {
             );
         }
 
-        validateHttpUri(uri);
+        validateHttpUri(uri, Boolean.TRUE.equals(configuration.get("allowPrivateNetwork")));
 
         validateTimeout(configuration);
 
@@ -460,7 +468,7 @@ public class HealthCheckPlugin implements WorkflowPlugin {
         }
     }
 
-    private void validateHttpUri(URI uri) {
+    private void validateHttpUri(URI uri, boolean allowPrivateNetwork) {
 
         String scheme = uri.getScheme();
 
@@ -489,6 +497,7 @@ public class HealthCheckPlugin implements WorkflowPlugin {
                     "HEALTH_CHECK 'url' must not contain credentials"
             );
         }
+        SsrfAddressPolicy.validate(uri, allowPrivateNetwork);
     }
 
     private String requireString(

@@ -9,9 +9,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 @Service
 public class ExecutionLogStreamService {
+
+    private static final Logger log = LoggerFactory.getLogger(ExecutionLogStreamService.class);
 
     private final Map<Long, List<SseEmitter>> emitters =
             new ConcurrentHashMap<>();
@@ -57,8 +61,8 @@ public class ExecutionLogStreamService {
 
                 return false;
 
-            } catch (IOException ex) {
-
+            } catch (IOException | IllegalStateException ex) {
+                log.debug("Removing disconnected execution log subscriber for execution {}", executionId, ex);
                 return true;
             }
 

@@ -17,11 +17,8 @@ public class TaskOutputService {
             Map<String, Object> output
     ) {
 
-        executionContextService.putVariable(
-                workflowExecutionId,
-                "task_" + taskId,
-                output
-        );
+        executionContextService.commitTaskResult(workflowExecutionId, taskId, "task_" + taskId,
+                "SUCCESS", output);
     }
 
     public Map<String, Object> getOutput(
@@ -29,13 +26,7 @@ public class TaskOutputService {
             Long taskId
     ) {
 
-        Map<String, Object> variables =
-                executionContextService.getVariables(
-                        workflowExecutionId
-                );
-
-        Object output =
-                variables.get("task_" + taskId);
+        Object output = executionContextService.getTaskResults(workflowExecutionId).get(String.valueOf(taskId));
 
         if (output == null) {
             return null;
@@ -48,10 +39,6 @@ public class TaskOutputService {
             );
         }
 
-        @SuppressWarnings("unchecked")
-        Map<String, Object> result =
-                (Map<String, Object>) map;
-
-        return result;
+        return new java.util.LinkedHashMap<>((Map<String, Object>) map);
     }
 }

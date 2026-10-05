@@ -6,5 +6,7 @@ public enum WorkflowExecutionStatus {
     SUCCESS,
     FAILED,
     PAUSED,
-    CANCELLED
+    CANCELLED,
+    WAITING_FOR_HUMAN,
+    TIMED_OUT
 }

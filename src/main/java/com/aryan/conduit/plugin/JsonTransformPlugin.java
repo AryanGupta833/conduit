@@ -42,14 +42,18 @@ public class JsonTransformPlugin implements WorkflowPlugin {
                                         "enum", List.of(
                                                 "PARSE",
                                                 "STRINGIFY",
-                                                "EXTRACT"
+                                        "EXTRACT"
+                                        , "MAP", "FILTER", "ARRAY_SELECT"
                                         )
                                 ),
                                 "path", Map.of(
                                         "type", "string",
                                         "description",
                                         "Dot-separated JSON path for EXTRACT"
-                                )
+                                ),
+                                "mapping", Map.of("type", "object", "description", "Output field name to source JSON path"),
+                                "field", Map.of("type", "string"), "equals", Map.of(), "index", Map.of("type", "integer"),
+                                "maxOutputBytes", Map.of("type", "integer", "default", 1048576, "maximum", 5242880)
                         )
                 )
         );
@@ -88,7 +92,7 @@ public class JsonTransformPlugin implements WorkflowPlugin {
         if (!List.of(
                 "PARSE",
                 "STRINGIFY",
-                "EXTRACT"
+                "EXTRACT", "MAP", "FILTER", "ARRAY_SELECT"
         ).contains(normalized)) {
 
             throw new PluginConfigurationException(
@@ -110,6 +114,15 @@ public class JsonTransformPlugin implements WorkflowPlugin {
                 );
             }
         }
+        if ("MAP".equals(normalized) && (!(configuration.get("mapping") instanceof Map<?, ?> m) || m.isEmpty() || m.size() > 100))
+            throw new PluginConfigurationException("JSON_TRANSFORM MAP requires 1 to 100 mapping entries");
+        if ("FILTER".equals(normalized) && (!(configuration.get("field") instanceof String f) || f.isBlank() || !configuration.containsKey("equals")))
+            throw new PluginConfigurationException("JSON_TRANSFORM FILTER requires field and equals");
+        if ("ARRAY_SELECT".equals(normalized) && (!(configuration.get("index") instanceof Number n) || n.intValue() < 0 || n.intValue() > 10000))
+            throw new PluginConfigurationException("JSON_TRANSFORM ARRAY_SELECT requires a non-negative index");
+        Object max = configuration.get("maxOutputBytes");
+        if (max != null && (!(max instanceof Number n) || n.intValue() < 1 || n.intValue() > 5 * 1024 * 1024))
+            throw new PluginConfigurationException("maxOutputBytes must be between 1 and 5242880");
     }
 
     @Override
@@ -144,6 +157,9 @@ public class JsonTransformPlugin implements WorkflowPlugin {
                                         configuration.get("path")
                                 )
                         );
+                case "MAP" -> map(input, (Map<?, ?>) configuration.get("mapping"), outputLimit(configuration));
+                case "FILTER" -> filter(input, String.valueOf(configuration.get("field")), configuration.get("equals"), outputLimit(configuration));
+                case "ARRAY_SELECT" -> arraySelect(input, ((Number) configuration.get("index")).intValue(), outputLimit(configuration));
 
                 default ->
                         throw new PluginConfigurationException(
@@ -168,6 +184,39 @@ public class JsonTransformPlugin implements WorkflowPlugin {
                     .build();
         }
     }
+
+    private int outputLimit(Map<String,Object> c) { return c.get("maxOutputBytes") instanceof Number n ? n.intValue() : 1024 * 1024; }
+    private JsonNode node(Object input) throws Exception { return input instanceof String s ? objectMapper.readTree(s) : objectMapper.valueToTree(input); }
+    private String bounded(Object value, int limit) throws Exception {
+        String json = objectMapper.writeValueAsString(value);
+        if (json.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > limit) throw new PluginConfigurationException("JSON_TRANSFORM output exceeds maxOutputBytes");
+        return json;
+    }
+    private JsonNode at(JsonNode root, String path) {
+        JsonNode current = root;
+        for (String p : path.split("\\.")) { if (p.isBlank() || current == null) return null; current = current.isArray() && p.matches("\\d+") ? current.path(Integer.parseInt(p)) : current.get(p); }
+        return current;
+    }
+    private PluginResult map(Object input, Map<?,?> fields, int limit) throws Exception {
+        JsonNode root = node(input); com.fasterxml.jackson.databind.node.ObjectNode out = objectMapper.createObjectNode();
+        for (var e : fields.entrySet()) {
+            if (!(e.getKey() instanceof String name) || !(e.getValue() instanceof String path) || !name.matches("[A-Za-z_][A-Za-z0-9_-]{0,99}")) throw new PluginConfigurationException("JSON_TRANSFORM mapping names and paths must be strings");
+            JsonNode value = at(root, path); if (value != null && !value.isMissingNode()) out.set(name, value);
+        }
+        return success("MAP", bounded(out, limit));
+    }
+    private PluginResult filter(Object input, String field, Object expected, int limit) throws Exception {
+        JsonNode root = node(input); if (!root.isArray()) throw new PluginConfigurationException("JSON_TRANSFORM FILTER input must be an array");
+        var out = objectMapper.createArrayNode(); int count = 0;
+        for (JsonNode item : root) { if (item.size() > 10000) throw new PluginConfigurationException("JSON_TRANSFORM item exceeds traversal limit"); JsonNode value = at(item, field);
+            if (value != null && !value.isMissingNode() && objectMapper.valueToTree(expected).equals(value)) { if (++count > 10000) throw new PluginConfigurationException("JSON_TRANSFORM matched too many array elements"); out.add(item); } }
+        return success("FILTER", bounded(out, limit));
+    }
+    private PluginResult arraySelect(Object input, int index, int limit) throws Exception {
+        JsonNode root = node(input); if (!root.isArray()) throw new PluginConfigurationException("JSON_TRANSFORM ARRAY_SELECT input must be an array");
+        JsonNode selected = root.path(index); return selected.isMissingNode() ? success("ARRAY_SELECT", null) : success("ARRAY_SELECT", bounded(selected, limit));
+    }
+    private PluginResult success(String operation, String output) { return PluginResult.builder().success(true).output(output).metadata(Map.of("operation", operation)).build(); }
 
     private PluginResult parse(Object input)
             throws Exception {

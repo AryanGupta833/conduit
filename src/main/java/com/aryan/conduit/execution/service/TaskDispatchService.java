@@ -41,7 +41,10 @@ public class TaskDispatchService {
 
                         taskExecution
                                 .getTaskNode()
-                                .getId()
+                                .getId(),
+
+                        taskExecution.getWorkflowExecution().getCorrelationId(),
+                        taskExecution.getWorkflowExecution().getPriority()
                 );
 
         outboxService.createTaskQueueEvent(

@@ -1,142 +1,88 @@
 package com.aryan.conduit.execution.service;
 
+import com.aryan.conduit.execution.entity.TaskExecution;
 import com.aryan.conduit.execution.entity.WorkflowExecution;
+import com.aryan.conduit.execution.repository.TaskExecutionRepository;
 import com.aryan.conduit.execution.repository.WorkflowExecutionRepository;
 import com.aryan.conduit.workflow.entity.TaskNode;
 import com.aryan.conduit.workflow.repository.TaskNodeRepository;
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+/** Builds a restart-safe expression view from PostgreSQL durable state. */
 @Service
 @RequiredArgsConstructor
 public class ExpressionContextService {
-
     private final ExecutionContextService executionContextService;
-    private final TaskOutputService taskOutputService;
     private final WorkflowExecutionRepository workflowExecutionRepository;
     private final TaskNodeRepository taskNodeRepository;
+    private final TaskExecutionRepository taskExecutionRepository;
     private final ObjectMapper objectMapper;
 
     public Map<String, Object> buildContext(Long workflowExecutionId) {
+        Map<String, Object> variables = new LinkedHashMap<>(executionContextService.getVariables(workflowExecutionId));
+        Map<String, Object> legacyTaskAliases = new LinkedHashMap<>();
+        Map<String, Object> taskResults = executionContextService.getTaskResults(workflowExecutionId);
+        WorkflowExecution execution = workflowExecutionRepository.findById(workflowExecutionId)
+                .orElseThrow(() -> new IllegalArgumentException("Workflow execution not found: " + workflowExecutionId));
+        List<TaskNode> nodes = taskNodeRepository.findByWorkflowVersion_Id(execution.getWorkflowVersion().getId());
+        Map<Long, TaskExecution> executions = new LinkedHashMap<>();
+        for (TaskExecution task : taskExecutionRepository.findByWorkflowExecution_Id(workflowExecutionId))
+            executions.put(task.getTaskNode().getId(), task);
 
-        Map<String, Object> context =
-                new HashMap<>(
-                        executionContextService.getVariables(
-                                workflowExecutionId
-                        )
-                );
-
-        WorkflowExecution workflowExecution =
-                workflowExecutionRepository
-                        .findById(workflowExecutionId)
-                        .orElseThrow(() ->
-                                new IllegalArgumentException(
-                                        "Workflow execution not found: "
-                                                + workflowExecutionId
-                                )
-                        );
-
-        Long workflowVersionId =
-                workflowExecution
-                        .getWorkflowVersion()
-                        .getId();
-
-        List<TaskNode> taskNodes =
-                taskNodeRepository
-                        .findByWorkflowVersion_Id(
-                                workflowVersionId
-                        );
-
-        for (TaskNode taskNode : taskNodes) {
-
-            String taskName = taskNode.getName();
-
-            if (taskName == null || taskName.isBlank()) {
-                continue;
-            }
-
-            Map<String, Object> taskOutput =
-                    taskOutputService.getOutput(
-                            workflowExecutionId,
-                            taskNode.getId()
-                    );
-
-            if (taskOutput == null) {
-                continue;
-            }
-
-            Map<String, Object> normalizedOutput =
-                    normalizeTaskOutput(taskOutput);
-
-            context.put(taskName, normalizedOutput);
+        Map<String, Object> tasks = new LinkedHashMap<>();
+        Map<String, Object> tasksById = new LinkedHashMap<>();
+        for (TaskNode node : nodes) {
+            String name = node.getName();
+            if (name == null || name.isBlank()) continue;
+            Object persisted = taskResults.get(String.valueOf(node.getId()));
+            Map<String, Object> result = persisted instanceof Map<?, ?> map ? stringKeyed(map) : new LinkedHashMap<>();
+            normalizeJsonOutput(result);
+            TaskExecution taskExecution = executions.get(node.getId());
+            if (taskExecution != null) result.put("status", taskExecution.getStatus().name());
+            if (result.isEmpty()) continue;
+            tasks.put(name, result);
+            tasksById.put("task_" + node.getId(), result);
+            // Preserve the existing `${taskName.output...}` expression convention.
+            legacyTaskAliases.put(name, result);
         }
 
+        Map<String, Object> context = new LinkedHashMap<>();
+        context.put("variables", variables);
+        context.put("tasks", tasks);
+        context.put("tasksById", tasksById);
+        Map<String, Object> workflow = new LinkedHashMap<>();
+        workflow.put("executionId", execution.getId());
+        workflow.put("version", execution.getVersionNumber());
+        workflow.put("status", execution.getStatus() == null ? "UNKNOWN" : execution.getStatus().name());
+        context.put("workflow", workflow);
+        // Legacy top-level variable paths continue to resolve.
+        variables.forEach(context::putIfAbsent);
+        legacyTaskAliases.forEach(context::putIfAbsent);
         return context;
     }
 
-    private Map<String, Object> normalizeTaskOutput(
-            Map<String, Object> taskOutput
-    ) {
+    private Map<String, Object> stringKeyed(Map<?, ?> source) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        source.forEach((key, value) -> { if (key instanceof String text) result.put(text, value); });
+        return result;
+    }
 
-        Map<String, Object> normalized =
-                new HashMap<>(taskOutput);
-
-        Object output =
-                normalized.get("output");
-
-        if (!(output instanceof String outputString)
-                || outputString.isBlank()) {
-            return normalized;
-        }
-
-        String trimmed = outputString.trim();
-
-        /*
-         * Only parse JSON objects/arrays.
-         * Ordinary plugin output such as "SUCCESS" remains a String.
-         */
-        if (!(trimmed.startsWith("{")
-                || trimmed.startsWith("["))) {
-            return normalized;
-        }
-
+    private void normalizeJsonOutput(Map<String, Object> result) {
+        Object output = result.get("output");
+        if (!(output instanceof String text) || text.isBlank()) return;
+        String trimmed = text.trim();
+        if (!(trimmed.startsWith("{") || trimmed.startsWith("["))) return;
         try {
-
-            JsonNode jsonNode =
-                    objectMapper.readTree(trimmed);
-
-            if (jsonNode == null
-                    || !(jsonNode.isObject()
-                    || jsonNode.isArray())) {
-                return normalized;
-            }
-
-            Object parsedOutput =
-                    objectMapper.convertValue(
-                            jsonNode,
-                            Object.class
-                    );
-
-            normalized.put(
-                    "output",
-                    parsedOutput
-            );
-
+            Object parsed = objectMapper.readValue(trimmed, Object.class);
+            if (parsed instanceof Map<?, ?> || parsed instanceof List<?>) result.put("output", parsed);
         } catch (Exception ignored) {
-
-            /*
-             * If the plugin output is not valid JSON,
-             * preserve it as the original String.
-             */
+            // Non-JSON plugin output remains the original string.
         }
-
-        return normalized;
     }
 }

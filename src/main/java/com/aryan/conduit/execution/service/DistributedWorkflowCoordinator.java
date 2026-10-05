@@ -13,6 +13,8 @@ import com.aryan.conduit.workflow.entity.Dependency;
 import com.aryan.conduit.workflow.repository.DependencyRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Autowired;
+import com.aryan.conduit.execution.workspace.ExecutionWorkspaceService;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
@@ -31,6 +33,16 @@ public class DistributedWorkflowCoordinator {
     private final DependencyRepository dependencyRepository;
     private final ExecutionRuntimeService executionRuntimeService;
     private final TaskDispatchService taskDispatchService;
+    private final ExecutionEventService executionEvents;
+    private ExecutionWorkspaceService workspaceService;
+
+    private ExecutionNotificationService notificationService;
+
+    @Autowired(required = false)
+    void setWorkspaceService(ExecutionWorkspaceService workspaceService) { this.workspaceService = workspaceService; }
+
+    @Autowired(required = false)
+    void setNotificationService(ExecutionNotificationService notificationService) { this.notificationService = notificationService; }
 
     @Transactional
     public void handleTaskCompletion(
@@ -40,7 +52,7 @@ public class DistributedWorkflowCoordinator {
 
         WorkflowExecution workflowExecution =
                 workflowExecutionRepository
-                        .findById(workflowExecutionId)
+                        .findByIdForUpdate(workflowExecutionId)
                         .orElseThrow(() ->
                                 new IllegalArgumentException(
                                         "Workflow execution not found: "
@@ -48,8 +60,8 @@ public class DistributedWorkflowCoordinator {
                                 )
                         );
 
-        if (workflowExecution.getStatus()
-                == WorkflowExecutionStatus.CANCELLED) {
+        if (workflowExecution.getStatus() != WorkflowExecutionStatus.RUNNING
+                && workflowExecution.getStatus() != WorkflowExecutionStatus.WAITING_FOR_HUMAN) {
             return;
         }
 
@@ -70,6 +82,12 @@ public class DistributedWorkflowCoordinator {
             );
         }
 
+        if (workflowExecution.getStatus() == WorkflowExecutionStatus.WAITING_FOR_HUMAN
+                && taskExecutions.stream().noneMatch(task -> task.getStatus() == TaskExecutionStatus.WAITING_FOR_HUMAN)) {
+            workflowExecution.setStatus(WorkflowExecutionStatus.RUNNING);
+            workflowExecutionRepository.save(workflowExecution);
+        }
+
         processChildren(
                 workflowExecutionId,
                 completedTaskId,
@@ -79,6 +97,63 @@ public class DistributedWorkflowCoordinator {
         checkWorkflowCompletion(
                 workflowExecutionId
         );
+    }
+
+    /**
+     * Resume a paused execution and reconcile terminal tasks completed while
+     * dispatch was paused. The execution row lock serializes this with task
+     * completion and pause/cancel operations across application instances.
+     */
+    @Transactional
+    public void resumeWorkflow(Long workflowExecutionId) {
+        WorkflowExecution workflowExecution = workflowExecutionRepository
+                .findByIdForUpdate(workflowExecutionId)
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "Workflow execution not found: " + workflowExecutionId));
+        if (workflowExecution.getStatus() != WorkflowExecutionStatus.PAUSED) {
+            return;
+        }
+
+        workflowExecution.setStatus(WorkflowExecutionStatus.RUNNING);
+        workflowExecutionRepository.save(workflowExecution);
+
+        List<TaskExecution> executions = taskExecutionRepository
+                .findByWorkflowExecution_Id(workflowExecutionId);
+        Map<Long, TaskExecutionStatus> statuses = new HashMap<>();
+        for (TaskExecution taskExecution : executions) {
+            statuses.put(taskExecution.getTaskNode().getId(), taskExecution.getStatus());
+        }
+
+        // The original dispatcher may have observed PAUSED before it queued
+        // any roots. Resume must therefore also recover still-pending roots.
+        for (TaskExecution taskExecution : executions) {
+            Long taskId = taskExecution.getTaskNode().getId();
+            if (taskExecution.getStatus() == TaskExecutionStatus.PENDING
+                    && dependencyRepository.findByChild_Id(taskId).isEmpty()) {
+                if (enqueueTask(taskExecution)) {
+                    statuses.put(taskId, TaskExecutionStatus.QUEUED);
+                }
+            }
+        }
+
+        for (TaskExecution taskExecution : executions) {
+            if (isTerminal(taskExecution.getStatus())) {
+                processChildren(workflowExecutionId, taskExecution.getTaskNode().getId(), statuses);
+            }
+        }
+        checkWorkflowCompletion(workflowExecutionId);
+    }
+
+    @Transactional
+    public void resumeAfterHumanTask(Long workflowExecutionId, Long completedTaskId) {
+        WorkflowExecution execution = workflowExecutionRepository.findByIdForUpdate(workflowExecutionId)
+                .orElseThrow(() -> new IllegalArgumentException("Workflow execution not found: " + workflowExecutionId));
+        if (execution.getStatus() == WorkflowExecutionStatus.CANCELLED || execution.getStatus() == WorkflowExecutionStatus.FAILED
+                || execution.getStatus() == WorkflowExecutionStatus.SUCCESS) return;
+        execution.setStatus(WorkflowExecutionStatus.RUNNING);
+        execution.setFinishedAt(null);
+        workflowExecutionRepository.save(execution);
+        handleTaskCompletion(workflowExecutionId, completedTaskId);
     }
 
     private void processChildren(
@@ -191,6 +266,7 @@ public class DistributedWorkflowCoordinator {
         taskExecutionRepository.save(
                 taskExecution
         );
+        metrics.conditionalBranchSkipped();
     }
 
     private boolean allParentsTerminal(
@@ -249,6 +325,16 @@ public class DistributedWorkflowCoordinator {
             return;
         }
 
+        if (executions.stream().anyMatch(task -> task.getStatus() == TaskExecutionStatus.WAITING_FOR_HUMAN)) {
+            workflowExecutionRepository.findById(workflowExecutionId).ifPresent(execution -> {
+                if (execution.getStatus() == WorkflowExecutionStatus.RUNNING) {
+                    execution.setStatus(WorkflowExecutionStatus.WAITING_FOR_HUMAN);
+                    workflowExecutionRepository.save(execution);
+                }
+            });
+            return;
+        }
+
         boolean allTerminal =
                 executions.stream()
                         .allMatch(
@@ -288,6 +374,13 @@ public class DistributedWorkflowCoordinator {
         workflowExecutionRepository.save(
                 workflowExecution
         );
+        executionEvents.append(workflowExecutionId, null, "EXECUTION_FINISHED",
+                workflowExecution.getStatus().name(), null);
+        if (failed && notificationService != null) {
+            notificationService.publish("execution-failed:" + workflowExecutionId, "EXECUTION_FAILED",
+                    "Workflow execution failed", "Execution " + workflowExecutionId + " finished with a failed task.", workflowExecutionId);
+        }
+        if (workspaceService != null) workspaceService.markFinished(workflowExecutionId.toString(), !failed);
         if (wasRunning) {
             long duration = workflowExecution.getStartedAt() == null ? 0L
                     : Duration.between(workflowExecution.getStartedAt(), workflowExecution.getFinishedAt()).toNanos();

@@ -39,8 +39,7 @@ public class TaskRecoveryService {
                 );
 
         for (StreamMessage message : messages) {
-
-            taskWorker.process(message);
+            if (!taskWorker.submit(message)) break;
         }
     }
 }

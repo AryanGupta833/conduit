@@ -41,6 +41,22 @@ public class WorkflowGraphService {
             Long parentId=dependency.getParent().getId();
             Long childId=dependency.getChild().getId();
 
+            if (!graph.containsKey(parentId) || !graph.containsKey(childId)) {
+                throw new IllegalStateException("Dependency references a task outside workflow version " + workflowVersionId);
+            }
+
+            if (dependency.getCondition() == com.aryan.conduit.execution.entity.DependencyCondition.EXPRESSION) {
+                try {
+                    String expression = dependency.getExpression();
+                    if (expression != null && expression.trim().startsWith("${") && expression.trim().endsWith("}"))
+                        expression = expression.trim().substring(2, expression.trim().length() - 1).trim();
+                    new com.aryan.conduit.execution.service.ExpressionParser(
+                            new com.aryan.conduit.execution.service.ExpressionLexer(expression).tokenize()).parse();
+                } catch (RuntimeException invalidExpression) {
+                    throw new IllegalStateException("Dependency expression is invalid: " + dependency.getId(), invalidExpression);
+                }
+            }
+
             graph.get(parentId).add(childId);
         }
         return graph;
@@ -115,6 +131,7 @@ public class WorkflowGraphService {
 
      public WorkflowGraphResponse getWorkflowGraph(Long versionId){
         List<TaskNode> tasks=taskNodeRepository.findByWorkflowVersion_Id(versionId);
+        var objectMapper = new com.fasterxml.jackson.databind.ObjectMapper();
 
         List<Dependency> dependencies=dependencyRepository.findByParent_WorkflowVersion_Id(versionId);
          List<GraphNodeResponse> nodes = tasks.stream()
@@ -127,7 +144,7 @@ public class WorkflowGraphService {
                          task.getTimeoutSeconds(),
                          task.getMaxRetries(),
                          task.getJoinCondition(),
-                         task.getConfigurationJson()
+                         com.aryan.conduit.plugin.security.InlineSecretConfigurationGuard.redactJson(task.getConfigurationJson(), objectMapper)
                  ))
                  .toList();
          List<GraphEdgeResponse> edges =

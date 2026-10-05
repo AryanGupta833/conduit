@@ -1,6 +1,5 @@
 package com.aryan.conduit.workflow.dto;
 
-import ch.qos.logback.classic.spi.Configurator;
 import com.aryan.conduit.execution.entity.WorkflowExecutionStatus;
 
 import java.time.LocalDateTime;
@@ -14,5 +13,6 @@ public record ExecutionStatusResponse(
         WorkflowExecutionStatus status,
         LocalDateTime startedAt,
         LocalDateTime finishedAt,
-        Long durationMs
+        Long durationMs,
+        String correlationId
 ) {}

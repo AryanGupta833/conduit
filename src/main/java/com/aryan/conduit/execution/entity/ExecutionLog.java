@@ -23,6 +23,7 @@ public class ExecutionLog {
     @Enumerated(EnumType.STRING)
     private LogLevel level;
 
+    @Column(name = "message", columnDefinition = "TEXT")
     private String message;
 
     @ManyToOne

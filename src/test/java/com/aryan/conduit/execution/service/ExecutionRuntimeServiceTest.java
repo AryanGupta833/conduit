@@ -51,6 +51,37 @@ class ExecutionRuntimeServiceTest {
     }
 
     @Test
+    void alwaysAndOnCompletionWaitForTerminalParentAndAcceptFailure() {
+        TaskNode parent = TaskNode.builder().id(10L).build();
+        TaskNode child = TaskNode.builder().id(20L).joinCondition(JoinCondition.ALL_PARENTS).build();
+        Dependency always = dependency(parent, child, DependencyCondition.ALWAYS);
+        Dependency completion = dependency(parent, child, DependencyCondition.ON_COMPLETION);
+        when(dependencyRepository.findByChild_Id(20L)).thenReturn(List.of(always, completion));
+
+        assertFalse(runtimeService.canRun(1L, 20L, Map.of(10L, TaskExecutionStatus.RUNNING)));
+        assertTrue(runtimeService.canRun(1L, 20L, Map.of(10L, TaskExecutionStatus.FAILED)));
+    }
+
+    @Test
+    void onFailureIncludesTimeout() {
+        TaskNode parent = TaskNode.builder().id(10L).build();
+        TaskNode child = TaskNode.builder().id(20L).joinCondition(JoinCondition.ALL_PARENTS).build();
+        Dependency dependency = dependency(parent, child, DependencyCondition.ON_FAILURE);
+        when(dependencyRepository.findByChild_Id(20L)).thenReturn(List.of(dependency));
+
+        assertTrue(runtimeService.canRun(1L, 20L, Map.of(10L, TaskExecutionStatus.TIMEOUT)));
+        assertFalse(runtimeService.canRun(1L, 20L, Map.of(10L, TaskExecutionStatus.SKIPPED)));
+    }
+
+    private Dependency dependency(TaskNode parent, TaskNode child, DependencyCondition condition) {
+        Dependency dependency = mock(Dependency.class);
+        when(dependency.getParent()).thenReturn(parent);
+        when(dependency.getChild()).thenReturn(child);
+        when(dependency.getCondition()).thenReturn(condition);
+        return dependency;
+    }
+
+    @Test
     void shouldAllowChildWhenExpressionIsTrue() {
 
         Long workflowExecutionId = 1L;

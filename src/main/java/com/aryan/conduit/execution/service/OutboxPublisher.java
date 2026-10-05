@@ -1,81 +1,29 @@
 package com.aryan.conduit.execution.service;
 
-import com.aryan.conduit.execution.entity.OutboxEvent;
-import com.aryan.conduit.execution.entity.OutboxEventStatus;
-import com.aryan.conduit.execution.queue.TaskMessage;
-import com.aryan.conduit.execution.queue.TaskQueueService;
-import com.aryan.conduit.execution.repository.OutboxEventRepository;
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-
-import java.time.LocalDateTime;
-import java.util.List;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class OutboxPublisher {
 
-    private final OutboxEventRepository outboxEventRepository;
-    private final TaskQueueService taskQueueService;
-    private final ObjectMapper objectMapper;
+    private static final int MAX_EVENTS_PER_POLL = 100;
+    private final OutboxEventDeliveryService deliveryService;
 
-    @Scheduled(fixedDelay = 1000)
+    @Scheduled(fixedDelayString = "${conduit.outbox.poll-interval-ms:1000}")
     public void publishPendingEvents() {
-
-        List<OutboxEvent> events =
-                outboxEventRepository
-                        .findTop100ByStatusOrderByIdAsc(
-                                OutboxEventStatus.PENDING
-                        );
-
-        for (OutboxEvent event : events) {
-            publish(event);
+        for (int i = 0; i < MAX_EVENTS_PER_POLL; i++) {
+            try {
+                if (!deliveryService.publishNextPending()) return;
+            } catch (RuntimeException failure) {
+                // The transaction rolls back and releases the row lock. A later
+                // poll retries the event; do not prevent unrelated schedulers.
+                log.warn("Outbox delivery failed; pending event will be retried", failure);
+                return;
+            }
         }
-    }
-
-    @Transactional
-    public void publish(
-            OutboxEvent event
-    ) {
-
-        if (event.getStatus()
-                != OutboxEventStatus.PENDING) {
-            return;
-        }
-
-        TaskMessage taskMessage;
-
-        try {
-
-            taskMessage =
-                    objectMapper.readValue(
-                            event.getPayload(),
-                            TaskMessage.class
-                    );
-
-        } catch (JsonProcessingException e) {
-
-            throw new IllegalStateException(
-                    "Failed to deserialize outbox event "
-                            + event.getId(),
-                    e
-            );
-        }
-
-        taskQueueService.enqueue(taskMessage);
-
-        event.setStatus(
-                OutboxEventStatus.PUBLISHED
-        );
-
-        event.setPublishedAt(
-                LocalDateTime.now()
-        );
-
-        outboxEventRepository.save(event);
     }
 }

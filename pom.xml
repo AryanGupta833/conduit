@@ -21,6 +21,7 @@
 
     <properties>
         <java.version>21</java.version>
+        <playwright.version>1.63.0</playwright.version>
 
         <!-- AWS SDK v2 -->
         <aws.sdk.version>2.31.68</aws.sdk.version>
@@ -73,11 +74,41 @@
             <artifactId>spring-boot-starter-security</artifactId>
         </dependency>
 
+        <!-- Spring's supported JWT encoder/decoder; Conduit owns login and does not use OAuth sign-in. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-oauth2-resource-server</artifactId>
+        </dependency>
+
         <!-- ================= AWS ================= -->
 
         <dependency>
             <groupId>software.amazon.awssdk</groupId>
             <artifactId>s3</artifactId>
+        </dependency>
+        <dependency><groupId>software.amazon.awssdk</groupId><artifactId>sns</artifactId></dependency>
+        <dependency><groupId>software.amazon.awssdk</groupId><artifactId>sqs</artifactId></dependency>
+        <dependency><groupId>software.amazon.awssdk</groupId><artifactId>lambda</artifactId></dependency>
+        <dependency><groupId>software.amazon.awssdk</groupId><artifactId>dynamodb</artifactId></dependency>
+
+        <dependency>
+            <groupId>org.jsoup</groupId>
+            <artifactId>jsoup</artifactId>
+            <version>1.23.2</version>
+        </dependency>
+
+        <!-- Optional browser rendering for JavaScript-driven public pages. -->
+        <dependency>
+            <groupId>com.microsoft.playwright</groupId>
+            <artifactId>playwright</artifactId>
+            <version>${playwright.version}</version>
+        </dependency>
+
+        <!-- SSH/SFTP client; host keys are pinned by the SFTP plugin. -->
+        <dependency>
+            <groupId>org.apache.sshd</groupId>
+            <artifactId>sshd-sftp</artifactId>
+            <version>2.20.0</version>
         </dependency>
 
         <!-- ================= Redis ================= -->
@@ -100,6 +131,16 @@
             <scope>runtime</scope>
         </dependency>
 
+        <!-- Versioned production schema changes. -->
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-database-postgresql</artifactId>
+        </dependency>
+
         <!-- ================= Validation ================= -->
 
         <dependency>
@@ -112,6 +153,10 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-mail</artifactId>
         </dependency>
 
         <!-- ================= Kafka ================= -->
@@ -246,6 +291,12 @@
                     </execution>
 
                 </executions>
+            </plugin>
+
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <version>3.5.0</version>
             </plugin>
 
         </plugins>

@@ -85,6 +85,72 @@ class DistributedWorkflowCoordinatorTest {
         taskB = new TaskNode();
         taskB.setId(2L);
         taskB.setName("B");
+
+        when(workflowExecutionRepository.findByIdForUpdate(100L))
+                .thenReturn(Optional.of(workflowExecution));
+    }
+
+    @Test
+    void shouldNotDispatchChildrenWhileWorkflowIsPaused() {
+        workflowExecution.setStatus(WorkflowExecutionStatus.PAUSED);
+        TaskExecution executionA = createTaskExecution(101L, taskA, TaskExecutionStatus.SUCCESS);
+        TaskExecution executionB = createTaskExecution(102L, taskB, TaskExecutionStatus.PENDING);
+        Dependency dependency = Dependency.builder()
+                .parent(taskA)
+                .child(taskB)
+                .condition(DependencyCondition.ON_SUCCESS)
+                .build();
+
+        coordinator.handleTaskCompletion(100L, 1L);
+
+        assertEquals(TaskExecutionStatus.PENDING, executionB.getStatus());
+        verify(taskDispatchService, never()).dispatch(any(TaskExecution.class));
+    }
+
+    @Test
+    void resumeShouldDispatchChildrenCompletedWhilePaused() {
+        workflowExecution.setStatus(WorkflowExecutionStatus.PAUSED);
+        TaskExecution executionA = createTaskExecution(101L, taskA, TaskExecutionStatus.SUCCESS);
+        TaskExecution executionB = createTaskExecution(102L, taskB, TaskExecutionStatus.PENDING);
+        Dependency dependency = Dependency.builder()
+                .parent(taskA)
+                .child(taskB)
+                .condition(DependencyCondition.ON_SUCCESS)
+                .build();
+
+        when(taskExecutionRepository.findByWorkflowExecution_Id(100L))
+                .thenReturn(List.of(executionA, executionB));
+        when(dependencyRepository.findByParent_Id(1L))
+                .thenReturn(List.of(dependency));
+        when(dependencyRepository.findByChild_Id(2L))
+                .thenReturn(List.of(dependency));
+        when(taskExecutionRepository.findByWorkflowExecution_IdAndTaskNode_Id(100L, 2L))
+                .thenReturn(Optional.of(executionB));
+        when(executionRuntimeService.canRun(eq(100L), eq(2L), anyMap()))
+                .thenReturn(true);
+        when(taskDispatchService.dispatch(executionB)).thenReturn(true);
+
+        coordinator.resumeWorkflow(100L);
+
+        assertEquals(WorkflowExecutionStatus.RUNNING, workflowExecution.getStatus());
+        assertEquals(TaskExecutionStatus.QUEUED, executionB.getStatus());
+        verify(taskDispatchService).dispatch(executionB);
+    }
+
+    @Test
+    void resumeShouldDispatchPendingRootsWhenPausedBeforeInitialDispatch() {
+        workflowExecution.setStatus(WorkflowExecutionStatus.PAUSED);
+        TaskExecution rootExecution = createTaskExecution(101L, taskA, TaskExecutionStatus.PENDING);
+        when(taskExecutionRepository.findByWorkflowExecution_Id(100L))
+                .thenReturn(List.of(rootExecution));
+        when(dependencyRepository.findByChild_Id(1L)).thenReturn(List.of());
+        when(taskDispatchService.dispatch(rootExecution)).thenReturn(true);
+
+        coordinator.resumeWorkflow(100L);
+
+        assertEquals(WorkflowExecutionStatus.RUNNING, workflowExecution.getStatus());
+        assertEquals(TaskExecutionStatus.QUEUED, rootExecution.getStatus());
+        verify(taskDispatchService).dispatch(rootExecution);
     }
 
     @Test
@@ -112,9 +178,6 @@ class DistributedWorkflowCoordinatorTest {
                                 DependencyCondition.ON_SUCCESS
                         )
                         .build();
-
-        when(workflowExecutionRepository.findById(100L))
-                .thenReturn(Optional.of(workflowExecution));
 
         when(taskExecutionRepository
                 .findByWorkflowExecution_Id(100L))
@@ -205,9 +268,6 @@ class DistributedWorkflowCoordinatorTest {
                                 DependencyCondition.ON_FAILURE
                         )
                         .build();
-
-        when(workflowExecutionRepository.findById(100L))
-                .thenReturn(Optional.of(workflowExecution));
 
         when(taskExecutionRepository
                 .findByWorkflowExecution_Id(100L))
@@ -382,9 +442,6 @@ class DistributedWorkflowCoordinatorTest {
                         )
                         .build();
 
-        when(workflowExecutionRepository.findById(100L))
-                .thenReturn(Optional.of(workflowExecution));
-
         when(taskExecutionRepository
                 .findByWorkflowExecution_Id(100L))
                 .thenReturn(
@@ -484,9 +541,6 @@ class DistributedWorkflowCoordinatorTest {
                         )
                         .build();
 
-        when(workflowExecutionRepository.findById(100L))
-                .thenReturn(Optional.of(workflowExecution));
-
         when(taskExecutionRepository
                 .findByWorkflowExecution_Id(100L))
                 .thenReturn(
@@ -564,10 +618,6 @@ class DistributedWorkflowCoordinatorTest {
                         )
                 );
 
-        when(workflowExecutionRepository
-                .findById(100L))
-                .thenReturn(Optional.of(workflowExecution));
-
         coordinator.handleTaskCompletion(
                 100L,
                 2L
@@ -639,9 +689,6 @@ class DistributedWorkflowCoordinatorTest {
                         taskB,
                         TaskExecutionStatus.PENDING
                 );
-
-        when(workflowExecutionRepository.findById(100L))
-                .thenReturn(Optional.of(workflowExecution));
 
         when(taskExecutionRepository
                 .findByWorkflowExecution_Id(100L))

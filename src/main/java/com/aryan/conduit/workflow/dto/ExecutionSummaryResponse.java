@@ -8,6 +8,7 @@ import java.time.LocalDateTime;
 @Builder
 public record ExecutionSummaryResponse(
         Long workflowExecutionId,
+        String correlationId,
         Long workflowId,
         Long workflowVersionId,
         Integer versionNumber,

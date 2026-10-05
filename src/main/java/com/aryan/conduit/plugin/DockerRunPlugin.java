@@ -1,5 +1,7 @@
 package com.aryan.conduit.plugin;
 
+import com.aryan.conduit.docker.ManagedWorkspaceMount;
+import com.aryan.conduit.execution.workspace.ExecutionWorkspace;
 import com.aryan.conduit.plugin.sdk.PluginConfigurationException;
 import com.aryan.conduit.plugin.sdk.PluginContext;
 import com.aryan.conduit.plugin.sdk.PluginMetadata;
@@ -147,6 +149,10 @@ public class DockerRunPlugin implements WorkflowPlugin {
                 configuration,
                 "networkDisabled"
         );
+
+        Object workspaceMode = configuration.get("workspaceMode");
+        if (workspaceMode != null && !List.of("READ_ONLY", "READ_WRITE").contains(String.valueOf(workspaceMode).toUpperCase()))
+            throw new PluginConfigurationException("workspaceMode must be READ_ONLY or READ_WRITE");
     }
 
     @Override
@@ -173,6 +179,16 @@ public class DockerRunPlugin implements WorkflowPlugin {
                         configuration,
                         "workingDirectory"
                 );
+        ExecutionWorkspace managedWorkspace = null;
+        if (context.workspace() instanceof ExecutionWorkspace executionWorkspace) {
+            managedWorkspace = executionWorkspace;
+        } else if (context.workspace() != null) {
+            throw new PluginConfigurationException("DOCKER_RUN requires Conduit's managed execution workspace");
+        }
+        if (managedWorkspace != null && workingDirectory != null
+                && (workingDirectory.equals("/workspace") || workingDirectory.startsWith("/workspace/"))) {
+            workingDirectory = ManagedWorkspaceMount.CONTAINER_PATH + workingDirectory.substring("/workspace".length());
+        }
 
         double cpus = getDouble(
                 configuration,
@@ -238,6 +254,8 @@ public class DockerRunPlugin implements WorkflowPlugin {
         // Security hardening.
         dockerCommand.add("--security-opt");
         dockerCommand.add("no-new-privileges");
+        dockerCommand.add("--cap-drop");
+        dockerCommand.add("ALL");
 
         if (readOnlyRootFilesystem) {
             dockerCommand.add("--read-only");
@@ -252,6 +270,8 @@ public class DockerRunPlugin implements WorkflowPlugin {
             dockerCommand.add("--workdir");
             dockerCommand.add(workingDirectory);
         }
+
+        addManagedWorkspaceMount(dockerCommand, managedWorkspace, configuration, workingDirectory);
 
         // Environment variables.
         for (Map.Entry<String, Object> entry :
@@ -354,7 +374,8 @@ public class DockerRunPlugin implements WorkflowPlugin {
                                         "exitCode",
                                         -1,
                                         "durationMs",
-                                        durationMs
+                                        durationMs,
+                                        "outputTruncated", output.contains("[output truncated]")
                                 )
                         )
                         .build();
@@ -383,6 +404,7 @@ public class DockerRunPlugin implements WorkflowPlugin {
                                     Map.entry("exitCode", exitCode),
                                     Map.entry("timedOut", false),
                                     Map.entry("durationMs", durationMs),
+                                    Map.entry("outputTruncated", output.contains("[output truncated]")),
                                     Map.entry("cpus", cpus),
                                     Map.entry("memoryMb", memoryMb),
                                     Map.entry("pidsLimit", pidsLimit),
@@ -456,6 +478,22 @@ public class DockerRunPlugin implements WorkflowPlugin {
         }
     }
 
+    void addManagedWorkspaceMount(List<String> dockerCommand, ExecutionWorkspace workspace,
+                                  Map<String, Object> configuration, String workingDirectory) {
+        if (workspace == null) return;
+        try {
+            dockerCommand.add("--mount");
+            dockerCommand.add(ManagedWorkspaceMount.dockerMount(workspace,
+                    "READ_ONLY".equalsIgnoreCase(String.valueOf(configuration.getOrDefault("workspaceMode", "READ_WRITE")))));
+            if (workingDirectory == null) {
+                dockerCommand.add("--workdir");
+                dockerCommand.add(ManagedWorkspaceMount.CONTAINER_PATH);
+            }
+        } catch (java.io.IOException e) {
+            throw new PluginConfigurationException("Unable to resolve managed workspace", e);
+        }
+    }
+
     private String readOutputWithLimit(
             Process process)
             throws Exception {
@@ -471,26 +509,15 @@ public class DockerRunPlugin implements WorkflowPlugin {
                              )
                      )) {
 
-            String line;
-
-            while ((line = reader.readLine()) != null) {
-
-                if (output.length()
-                        + line.length()
-                        + 1
-                        <= MAX_OUTPUT_LENGTH) {
-
-                    output.append(line)
-                            .append('\n');
-                } else {
-
-                    output.append(
-                            "\n[output truncated]"
-                    );
-
-                    break;
-                }
+            char[] buffer = new char[4096];
+            int count;
+            boolean truncated = false;
+            while ((count = reader.read(buffer)) != -1) {
+                int remaining = MAX_OUTPUT_LENGTH - output.length();
+                if (remaining > 0) output.append(buffer, 0, Math.min(remaining, count));
+                if (count > remaining) truncated = true;
             }
+            if (truncated) output.append("\n[output truncated]");
         }
 
         return output.toString();
@@ -498,6 +525,8 @@ public class DockerRunPlugin implements WorkflowPlugin {
 
     private void destroyProcess(
             Process process) {
+
+        process.descendants().forEach(ProcessHandle::destroy);
 
         process.destroy();
 
@@ -507,6 +536,7 @@ public class DockerRunPlugin implements WorkflowPlugin {
                     TimeUnit.SECONDS
             )) {
                 process.destroyForcibly();
+                process.descendants().forEach(ProcessHandle::destroyForcibly);
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();

@@ -9,6 +9,7 @@ import com.aryan.conduit.workflow.entity.WorkflowVersion;
 import com.aryan.conduit.workflow.repository.DependencyRepository;
 import com.aryan.conduit.workflow.repository.TaskNodeRepository;
 import com.aryan.conduit.workflow.repository.WorkflowVersionRepository;
+import com.aryan.conduit.workflow.repository.WorkflowRepository;
 import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -21,17 +22,22 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class WorkflowVersionService {
     private final WorkflowVersionRepository workflowVersionRepository;
+    private final WorkflowRepository workflowRepository;
     private final TaskNodeRepository taskNodeRepository;
     private final DependencyRepository dependencyRepository;
+    private final WorkflowGraphService workflowGraphService;
 
     @Transactional
     public WorkflowVersion createVersion(Long workflowId) {
+        var workflow = workflowRepository.findByIdForUpdate(workflowId)
+                .orElseThrow(() -> new RuntimeException("Workflow not found"));
         WorkflowVersion latestVersion = workflowVersionRepository.findTopByWorkflow_IdOrderByVersionNumberDesc(workflowId).orElseThrow(() -> new RuntimeException("Workflow not found"));
+        if (!Boolean.TRUE.equals(latestVersion.getPublished())) return latestVersion;
         latestVersion.setLatest(false);
         workflowVersionRepository.save(latestVersion);
 
         WorkflowVersion newVersion = WorkflowVersion.builder().
-                workflow(latestVersion.getWorkflow()).versionNumber(latestVersion.getVersionNumber() + 1)
+                workflow(workflow).versionNumber(latestVersion.getVersionNumber() + 1)
                 .published(false).latest(true).createdAt(LocalDateTime.now()).
                 build();
 
@@ -42,8 +48,13 @@ public class WorkflowVersionService {
         for (TaskNode oldTask : oldTasks) {
             TaskNode newTask = TaskNode.builder()
                     .name(oldTask.getName()).workflowVersion(newVersion)
+                    .displayName(oldTask.getDisplayName())
+                    .pluginType(oldTask.getPluginType())
+                    .configurationJson(oldTask.getConfigurationJson())
                     .timeoutSeconds(oldTask.getTimeoutSeconds()).maxRetries(oldTask.getMaxRetries())
                     .joinCondition(oldTask.getJoinCondition())
+                    .xPosition(oldTask.getXPosition())
+                    .yPosition(oldTask.getYPosition())
                     .build();
 
             newTask = taskNodeRepository.save(newTask);
@@ -67,12 +78,19 @@ public class WorkflowVersionService {
     }
 
     public WorkflowVersion getLatestPublishedVersion(Long workflowId) {
-        return workflowVersionRepository.findByWorkflow_IdAndLatestTrue(workflowId).orElseThrow(() -> new RuntimeException("No published version found"));
+        return workflowVersionRepository.findTopByWorkflow_IdAndPublishedTrueOrderByVersionNumberDesc(workflowId).orElseThrow(() -> new RuntimeException("No published version found"));
     }
 
     @Transactional
     public WorkflowVersion publishVersion(Long versionId) {
         WorkflowVersion version = workflowVersionRepository.findById(versionId).orElseThrow(() -> new RuntimeException("Version not found"));
+        workflowRepository.findByIdForUpdate(version.getWorkflow().getId())
+                .orElseThrow(() -> new RuntimeException("Workflow not found"));
+        // Re-read after acquiring the parent lock so concurrent version
+        // lifecycle mutations serialize before changing published/latest flags.
+        version = workflowVersionRepository.findById(versionId)
+                .orElseThrow(() -> new RuntimeException("Version not found"));
+        ensureExecutableVersion(versionId);
         List<WorkflowVersion> versions = workflowVersionRepository.findByWorkflow_IdOrderByVersionNumberDesc(version.getWorkflow().getId());
 
         for (WorkflowVersion v : versions) {
@@ -114,11 +132,14 @@ public class WorkflowVersionService {
 
     @Transactional
     public WorkflowVersion rollbackToVersion(Long workflowId, Long versionId) {
+        workflowRepository.findByIdForUpdate(workflowId)
+                .orElseThrow(() -> new RuntimeException("Workflow not found"));
         WorkflowVersion targetVersion = workflowVersionRepository.findById(versionId).orElseThrow(() -> new RuntimeException("Version not found"));
 
         if (!targetVersion.getWorkflow().getId().equals(workflowId)) {
             throw new IllegalArgumentException("Version does not belong to workflow");
         }
+        ensureExecutableVersion(versionId);
 
         List<WorkflowVersion> versions = workflowVersionRepository.findByWorkflow_IdOrderByVersionNumberDesc(workflowId);
 
@@ -134,6 +155,11 @@ public class WorkflowVersionService {
         targetVersion.setPublishedAt(LocalDateTime.now());
 
         return workflowVersionRepository.save(targetVersion);
+    }
+
+    private void ensureExecutableVersion(Long versionId) {
+        if (workflowGraphService.generateExecutionStages(versionId).isEmpty())
+            throw new IllegalStateException("Cannot publish a workflow version without tasks");
     }
 
     public WorkflowVersionDiffResponse compareVersions(

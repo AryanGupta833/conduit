@@ -1,6 +1,5 @@
 package com.aryan.conduit.execution.entity;
 
-import com.aryan.conduit.workflow.entity.Workflow;
 import com.aryan.conduit.workflow.entity.WorkflowVersion;
 import jakarta.persistence.*;
 import lombok.*;
@@ -31,6 +30,25 @@ public class WorkflowExecution {
 
     private LocalDateTime startedAt;
     private LocalDateTime finishedAt;
+
+    @Column(name = "deadline_at")
+    private LocalDateTime deadlineAt;
+
+    @Column(nullable = false)
+    private Integer priority;
+
+    @Column(name = "initiated_by", length = 254)
+    private String initiatedBy;
+
+    @Column(name = "correlation_id", unique = true, length = 36)
+    private String correlationId;
+
+    @PrePersist
+    void ensureCorrelationId() {
+        if (correlationId == null || correlationId.isBlank())
+            correlationId = java.util.UUID.randomUUID().toString();
+        if (priority == null) priority = 0;
+    }
 
 
 }

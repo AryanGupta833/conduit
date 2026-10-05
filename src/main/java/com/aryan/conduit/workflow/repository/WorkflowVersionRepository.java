@@ -9,6 +9,8 @@ import java.util.Optional;
 public interface WorkflowVersionRepository extends JpaRepository<WorkflowVersion,Long> {
     List<WorkflowVersion> findByWorkflow_IdOrderByVersionNumberDesc(Long workflowId);
     Optional<WorkflowVersion> findByWorkflow_IdAndPublishedTrue(Long workflowId);
+    Optional<WorkflowVersion> findTopByWorkflow_IdAndPublishedTrueOrderByVersionNumberDesc(Long workflowId);
     Optional<WorkflowVersion> findTopByWorkflow_IdOrderByVersionNumberDesc(Long workflowId);
     Optional<WorkflowVersion> findByWorkflow_IdAndLatestTrue(Long workflowId);
+    boolean existsByWorkflow_IdAndPublishedTrue(Long workflowId);
 }

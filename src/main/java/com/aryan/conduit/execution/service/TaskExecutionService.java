@@ -3,6 +3,9 @@ package com.aryan.conduit.execution.service;
 import com.aryan.conduit.execution.entity.TaskExecution;
 import com.aryan.conduit.execution.entity.TaskExecutionStatus;
 import com.aryan.conduit.execution.repository.TaskExecutionRepository;
+import com.aryan.conduit.execution.repository.WorkflowExecutionRepository;
+import com.aryan.conduit.execution.entity.WorkflowExecution;
+import com.aryan.conduit.execution.entity.WorkflowExecutionStatus;
 import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -11,13 +14,35 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 public class TaskExecutionService {
     private final TaskExecutionRepository taskExecutionRepository;
+    private final WorkflowExecutionRepository workflowExecutionRepository;
+
+    public enum StartDecision { STARTED, DEFERRED, CANCELLED }
 
     @Transactional
-    public void markRunning(Long taskExecutionId){
+    public StartDecision tryMarkRunning(Long taskExecutionId){
         TaskExecution taskExecution=taskExecutionRepository.findById(taskExecutionId).orElseThrow();
+        WorkflowExecution workflowExecution = workflowExecutionRepository
+                .findByIdForUpdate(taskExecution.getWorkflowExecution().getId()).orElseThrow();
+
+        if (workflowExecution.getStatus() == WorkflowExecutionStatus.PAUSED
+                || workflowExecution.getStatus() == WorkflowExecutionStatus.WAITING_FOR_HUMAN) {
+            return StartDecision.DEFERRED;
+        }
+        if (workflowExecution.getStatus() != WorkflowExecutionStatus.RUNNING) {
+            if (taskExecution.getStatus() != TaskExecutionStatus.SUCCESS
+                    && taskExecution.getStatus() != TaskExecutionStatus.FAILED
+                    && taskExecution.getStatus() != TaskExecutionStatus.TIMEOUT
+                    && taskExecution.getStatus() != TaskExecutionStatus.SKIPPED
+                    && taskExecution.getStatus() != TaskExecutionStatus.WAITING_FOR_HUMAN) {
+                taskExecution.setStatus(TaskExecutionStatus.SKIPPED);
+                taskExecutionRepository.save(taskExecution);
+            }
+            return StartDecision.CANCELLED;
+        }
 
         taskExecution.setStatus(TaskExecutionStatus.RUNNING);
         taskExecutionRepository.save(taskExecution);
+        return StartDecision.STARTED;
     }
 
     @Transactional

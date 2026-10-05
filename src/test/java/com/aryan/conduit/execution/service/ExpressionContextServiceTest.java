@@ -2,9 +2,10 @@ package com.aryan.conduit.execution.service;
 
 import com.aryan.conduit.execution.entity.WorkflowExecution;
 import com.aryan.conduit.execution.repository.WorkflowExecutionRepository;
+import com.aryan.conduit.execution.repository.TaskExecutionRepository;
+import com.aryan.conduit.execution.entity.TaskExecution;
 import com.aryan.conduit.workflow.entity.TaskNode;
 import com.aryan.conduit.workflow.repository.TaskNodeRepository;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -18,7 +19,7 @@ import static org.mockito.Mockito.*;
 class ExpressionContextServiceTest {
 
     private ExecutionContextService executionContextService;
-    private TaskOutputService taskOutputService;
+    private TaskExecutionRepository taskExecutionRepository;
     private WorkflowExecutionRepository workflowExecutionRepository;
     private TaskNodeRepository taskNodeRepository;
     private ExpressionContextService expressionContextService;
@@ -29,8 +30,7 @@ class ExpressionContextServiceTest {
         executionContextService =
                 mock(ExecutionContextService.class);
 
-        taskOutputService =
-                mock(TaskOutputService.class);
+        taskExecutionRepository = mock(TaskExecutionRepository.class);
 
         workflowExecutionRepository =
                 mock(WorkflowExecutionRepository.class);
@@ -41,10 +41,10 @@ class ExpressionContextServiceTest {
         expressionContextService =
                 new ExpressionContextService(
                         executionContextService,
-                        taskOutputService,
                         workflowExecutionRepository,
                         taskNodeRepository,
-                        new ObjectMapper()
+                        taskExecutionRepository,
+                        new com.fasterxml.jackson.databind.ObjectMapper()
                 );
     }
 
@@ -90,20 +90,15 @@ class ExpressionContextServiceTest {
                 )
         ).thenReturn(List.of(taskNode));
 
-        when(
-                taskOutputService.getOutput(
-                        executionId,
-                        taskId
-                )
-        ).thenReturn(
+        when(executionContextService.getTaskResults(executionId)).thenReturn(Map.of("100",
                 Map.of(
-                        "success", true,
+                        "status", "SUCCESS",
+                        "name", "fetchUser",
                         "output",
                         "{\"userId\":42,\"email\":\"user@example.com\"}",
                         "variables", Map.of(),
                         "metadata", Map.of()
-                )
-        );
+                )));
 
         Map<String, Object> context =
                 expressionContextService.buildContext(
@@ -168,19 +163,14 @@ class ExpressionContextServiceTest {
                 )
         ).thenReturn(List.of(taskNode));
 
-        when(
-                taskOutputService.getOutput(
-                        executionId,
-                        taskId
-                )
-        ).thenReturn(
+        when(executionContextService.getTaskResults(executionId)).thenReturn(Map.of("100",
                 Map.of(
-                        "success", true,
+                        "status", "SUCCESS",
+                        "name", "logTask",
                         "output", "Hello World",
                         "variables", Map.of(),
                         "metadata", Map.of()
-                )
-        );
+                )));
 
         Map<String, Object> context =
                 expressionContextService.buildContext(

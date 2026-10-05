@@ -21,8 +21,12 @@ public class PluginService {
     private PluginResponse toResponse(PluginMetadata metadata) {
         List<String> required = metadata.configurationSchema().get("required") instanceof List<?> values
                 ? values.stream().map(String::valueOf).toList() : List.of();
+        Map<String, Object> example = "HUMAN_TASK".equals(metadata.type())
+                ? Map.of("type", "APPROVAL", "title", "Review required", "assignee", "team-name",
+                        "timeoutSeconds", 86400, "timeoutPolicy", "FAIL")
+                : Map.of();
         return new PluginResponse(metadata.type(), metadata.description(), required,
-                List.of("output", "variables", "metadata"), Map.of(), metadata.displayName(),
+                List.of("output", "variables", "metadata"), example, metadata.displayName(),
                 metadata.version(), metadata.configurationSchema());
     }
 }

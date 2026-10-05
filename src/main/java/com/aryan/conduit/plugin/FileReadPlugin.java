@@ -22,6 +22,7 @@ import java.util.Map;
 public class FileReadPlugin implements WorkflowPlugin {
 
     private static final String DEFAULT_ENCODING = "UTF-8";
+    private static final int MAX_TEXT_BYTES = 16 * 1024 * 1024;
 
     @Override
     public PluginMetadata metadata() {
@@ -118,14 +119,24 @@ public class FileReadPlugin implements WorkflowPlugin {
                 );
 
         try {
+            Charset charset = Charset.forName(encoding);
+            if (context.workspace() != null) {
+                byte[] bytes;
+                try (var input = context.workspace().openRead(relativePath)) {
+                    bytes = input.readNBytes(MAX_TEXT_BYTES + 1);
+                    if (bytes.length > MAX_TEXT_BYTES)
+                        throw new PluginConfigurationException("FILE_READ exceeds the 16 MiB text output limit");
+                }
+                return PluginResult.builder().success(true).output(new String(bytes, charset))
+                        .metadata(Map.of("operation", "READ", "path", relativePath,
+                                "sizeBytes", bytes.length, "encoding", charset.name()))
+                        .build();
+            }
             Path file =
                     resolveWorkspacePath(
                             workspaceRoot,
                             relativePath
                     );
-
-            Charset charset =
-                    Charset.forName(encoding);
 
             String content =
                     Files.readString(

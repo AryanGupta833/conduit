@@ -19,12 +19,12 @@ public class RetryPolicy {
 
     public long calculateDelay(int retryNumber) {
 
-        long delay;
-
-        if (backoffStrategy == RetryBackoffStrategy.EXPONENTIAL) {
-            delay = initialDelayMs * (1L << Math.max(0, retryNumber - 1));
-        } else {
-            delay = initialDelayMs;
+        long cap = Math.max(0L, maxDelayMs);
+        long delay = Math.min(Math.max(0L, initialDelayMs), cap);
+        if (backoffStrategy == RetryBackoffStrategy.EXPONENTIAL && delay > 0) {
+            for (int i = 1; i < retryNumber && delay < cap; i++) {
+                delay = delay > cap / 2 ? cap : delay * 2;
+            }
         }
 
         if (jitter) {
@@ -32,7 +32,7 @@ public class RetryPolicy {
             delay = (long) (delay * multiplier);
         }
 
-        return Math.min(delay, maxDelayMs);
+        return Math.max(0L, Math.min(delay, cap));
     }
 
     public boolean shouldRetry(int retryNumber) {

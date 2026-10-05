@@ -20,7 +20,46 @@ Implement `WorkflowPlugin` with:
 - `validateConfiguration(Map<String, Object>)` checking plugin-owned configuration and throwing `PluginConfigurationException` with an actionable message.
 - `execute(PluginContext)` returning `PluginResult` with success, output, optional variables, and metadata.
 
-`PluginContext` contains the task name, task timeout, parsed configuration, and the current expression context. The context includes workflow variables and prior task outputs through Conduit's existing variable mechanism. Its maps are read-only snapshots.
+`PluginContext` contains the task name, task timeout, parsed configuration, the current expression context, managed workspace, and a stable task idempotency key. The context includes workflow variables and prior task outputs through Conduit's existing variable mechanism. Its maps are read-only snapshots. The older four- and five-argument constructors remain available for source compatibility; plugins should use `idempotencyKey()` when the remote service supports request deduplication.
+
+## Public HTML scraping
+
+`WEB_SCRAPE` fetches a single publicly reachable HTML page and extracts text or selected attributes with CSS selectors. Example configuration:
+
+```json
+{
+  "url": "https://example.org/reports",
+  "itemSelector": "article.report",
+  "selectors": {
+    "title": "h2",
+    "published": { "selector": "time", "attribute": "datetime" },
+    "links": { "selector": "a", "attribute": "href", "all": true }
+  },
+  "maxItems": 20
+}
+```
+
+The plugin supports explicit `urls` or a `nextSelector` plus `maxPages` (default 10 when following next links; hard maximum 10). URL lists and pagination must remain on one origin. Each page is rechecked against the private/reserved-address policy; loops stop when a URL repeats. It waits 1 second between pages by default; `pageDelayMs` is configurable from 250 to 10,000 ms. Multi-page output is shaped as `{"pages":[{"sourceHost":"example.org","data":...}]}`. A single-page `url` configuration retains its existing output shape. Raw HTML mode is capped at 1 MiB; both modes cap combined extracted JSON at 256 KiB. Set `renderJavaScript: true` to opt into headless Chromium for public pages whose content is populated by JavaScript; this requires the Playwright Chromium runtime on the worker. Browser requests are rechecked against SSRF policy, with at most 200 requests and two concurrent render sessions. The plugin does not solve CAPTCHAs, bypass sign-in, or evade rate limits. Sites requiring authentication should be accessed only through an explicitly authorized API and a named Conduit credential; do not scrape protected pages by automating a personal login.
+
+Example next-link pagination:
+
+```json
+{
+  "url": "https://example.org/reports",
+  "nextSelector": "a.next[rel=next]",
+  "maxPages": 5,
+  "itemSelector": "article.report",
+  "selectors": { "title": "h2", "link": { "selector": "a", "attribute": "href" } }
+}
+```
+
+## AWS service plugins
+
+`AWS_SNS_PUBLISH`, `AWS_SQS_SEND`, `AWS_LAMBDA_INVOKE`, and `AWS_DYNAMODB` use the AWS SDK v2 default credential chain and `aws.region` (default `ap-south-1`). Supply IAM roles/profile credentials outside the workflow configuration. Grant only the corresponding `sns:Publish`, `sqs:SendMessage`, `lambda:InvokeFunction`, and table-scoped DynamoDB actions. DynamoDB deliberately supports item-level GET/PUT/DELETE only, with no Scan. No workflow field accepts credentials or a custom AWS endpoint URL. SQS FIFO messages reuse the task idempotency key as the default deduplication ID.
+
+## SFTP file transfer
+
+The built-in `SFTP` plugin supports bounded `LIST`, `DOWNLOAD`, and `UPLOAD` operations. See [SFTP plugin setup and example configs](sftp-plugin.md) for credential setup, host-key pinning, private-network policy, transfer caps, and workflow templates. The password must be stored as a named workflow credential. Upload and download paths are relative to the managed execution workspace.
 
 ## Discovery and installation
 

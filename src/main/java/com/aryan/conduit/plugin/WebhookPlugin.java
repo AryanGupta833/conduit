@@ -17,6 +17,7 @@ import org.springframework.web.client.RestTemplate;
 import java.net.URI;
 import java.util.List;
 import java.util.Map;
+import com.aryan.conduit.plugin.security.SsrfAddressPolicy;
 
 @Component
 @RequiredArgsConstructor
@@ -58,6 +59,10 @@ public class WebhookPlugin implements WorkflowPlugin {
                                 "body", Map.of(
                                         "type", "object",
                                         "description", "Webhook request body"
+                                ),
+                                "allowPrivateNetwork", Map.of(
+                                        "type", "boolean", "default", false,
+                                        "description", "Allow local/private destinations for trusted workflows"
                                 )
                         )
                 )
@@ -84,16 +89,9 @@ public class WebhookPlugin implements WorkflowPlugin {
 
         try {
             URI uri = URI.create(url);
-
-            String scheme = uri.getScheme();
-
-            if (!"http".equalsIgnoreCase(scheme)
-                    && !"https".equalsIgnoreCase(scheme)) {
-
-                throw new PluginConfigurationException(
-                        "WEBHOOK URL must use HTTP or HTTPS"
-                );
-            }
+            if (configuration.get("allowPrivateNetwork") != null && !(configuration.get("allowPrivateNetwork") instanceof Boolean))
+                throw new PluginConfigurationException("WEBHOOK 'allowPrivateNetwork' must be a boolean");
+            SsrfAddressPolicy.validate(uri, Boolean.TRUE.equals(configuration.get("allowPrivateNetwork")));
 
         } catch (IllegalArgumentException ex) {
 
@@ -159,6 +157,8 @@ public class WebhookPlugin implements WorkflowPlugin {
                             )
                     ).toUpperCase();
 
+            SsrfAddressPolicy.validate(URI.create(url), Boolean.TRUE.equals(configuration.get("allowPrivateNetwork")));
+
             HttpHeaders headers = new HttpHeaders();
 
             Object headersValue =
@@ -192,44 +192,60 @@ public class WebhookPlugin implements WorkflowPlugin {
                     body = objectMapper.writeValueAsString(bodyValue);
                 }
             }
+            if (body != null && body.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > 1024 * 1024)
+                throw new PluginConfigurationException("WEBHOOK request body exceeds the 1 MiB limit");
 
             HttpEntity<String> requestEntity =
                     new HttpEntity<>(body, headers);
 
-            ResponseEntity<String> response =
-                    restTemplate.exchange(
-                            url,
-                            HttpMethod.valueOf(method),
-                            requestEntity,
-                            String.class
-                    );
+            final String requestBody = body;
+            BoundedHttpResponse response = restTemplate.execute(URI.create(url), HttpMethod.valueOf(method), request -> {
+                request.getHeaders().putAll(headers);
+                if (context.idempotencyKey() != null && !context.idempotencyKey().isBlank()
+                        && !request.getHeaders().containsKey("Idempotency-Key"))
+                    request.getHeaders().set("Idempotency-Key", context.idempotencyKey());
+                if (requestBody != null) request.getBody().write(requestBody.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            }, BoundedHttpResponse::read);
+            if (response == null) throw new IllegalStateException("Webhook returned no response");
 
-            boolean success =
-                    response.getStatusCode().is2xxSuccessful();
+            boolean success = response.statusCode() >= 200 && response.statusCode() < 300;
+
+            if (!success) {
+                int status = response.statusCode();
+                throw new PluginHttpFailureException(status, status == 408 || status == 425 || status == 429 || status >= 500,
+                        parseRetryAfter(response.retryAfter()));
+            }
 
             return PluginResult.builder()
                     .success(success)
-                    .output(response.getBody())
+                    .output(response.body())
                     .metadata(Map.of(
-                            "statusCode",
-                            response.getStatusCode().value(),
+                            "statusCode", response.statusCode(),
+                            "outputTruncated", response.truncated(),
                             "method",
                             method,
-                            "url",
-                            url
+                            "host", URI.create(url).getHost()
                     ))
                     .build();
 
         } catch (Exception ex) {
 
+            if (ex instanceof PluginHttpFailureException retryFailure) throw retryFailure;
+
             return PluginResult.builder()
                     .success(false)
-                    .output(
-                            ex.getMessage() == null
-                                    ? ex.getClass().getSimpleName()
-                                    : ex.getMessage()
-                    )
+                    .output("Webhook request failed: " + ex.getClass().getSimpleName())
                     .build();
+        }
+    }
+
+    private long parseRetryAfter(String value) {
+        if (value == null) return 0;
+        try { return Math.max(0, Long.parseLong(value.trim()) * 1000); }
+        catch (NumberFormatException ignored) {
+            try { return Math.max(0, java.time.Duration.between(java.time.Instant.now(),
+                    java.time.ZonedDateTime.parse(value, java.time.format.DateTimeFormatter.RFC_1123_DATE_TIME).toInstant()).toMillis()); }
+            catch (Exception ignoredAgain) { return 0; }
         }
     }
 }

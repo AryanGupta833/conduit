@@ -48,6 +48,7 @@ public class OutboxService {
                         .aggregateId(
                                 taskMessage.taskExecutionId()
                         )
+                        .priority(taskMessage.priority() == null ? 0 : taskMessage.priority())
                         .payload(payload)
                         .status(
                                 OutboxEventStatus.PENDING

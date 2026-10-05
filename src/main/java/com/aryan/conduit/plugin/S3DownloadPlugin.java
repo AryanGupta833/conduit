@@ -13,7 +13,6 @@ import software.amazon.awssdk.services.s3.model.GetObjectResponse;
 import software.amazon.awssdk.services.s3.model.S3Exception;
 
 import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.LinkedHashMap;
@@ -65,104 +64,45 @@ public class S3DownloadPlugin implements WorkflowPlugin {
 
         String bucket = String.valueOf(configuration.get("bucket"));
         String key = String.valueOf(configuration.get("key"));
-        String workspaceRootValue =
-                String.valueOf(configuration.get("workspaceRoot"));
         String destinationPath =
                 String.valueOf(configuration.get("destinationPath"));
 
         boolean createDirectories =
                 getBoolean(configuration, "createDirectories", true);
-
-        Path workspaceRoot = Paths.get(workspaceRootValue)
-                .toAbsolutePath()
-                .normalize();
-
-        if (!Files.exists(workspaceRoot)) {
-            if (createDirectories) {
-                Files.createDirectories(workspaceRoot);
-            } else {
-                throw new PluginConfigurationException(
-                        "S3_DOWNLOAD workspace root does not exist: "
-                                + workspaceRoot
-                );
-            }
-        }
-
-        if (!Files.isDirectory(workspaceRoot)) {
-            throw new PluginConfigurationException(
-                    "S3_DOWNLOAD workspaceRoot is not a directory: "
-                            + workspaceRoot
-            );
-        }
-
-        Path destination = resolveDestination(
-                workspaceRoot,
-                destinationPath
-        );
-
-        prepareDestination(
-                workspaceRoot,
-                destination,
-                createDirectories
-        );
+        if (context.workspace() == null)
+            throw new PluginConfigurationException("S3_DOWNLOAD requires a managed execution workspace");
+        boolean overwrite = getBoolean(configuration, "overwrite", true);
 
         GetObjectRequest request = GetObjectRequest.builder()
                 .bucket(bucket)
                 .key(key)
+                .versionId(configuration.get("versionId") == null ? null : String.valueOf(configuration.get("versionId")))
                 .build();
 
-        try {
-            /*
-             * AWS SDK v2 direct-to-file overload.
-             *
-             * The object is streamed directly to the destination file,
-             * avoiding an in-memory byte[] for potentially large objects.
-             */
-            GetObjectResponse response = s3Client.getObject(
-                    request,
-                    destination
-            );
-
-            long sizeBytes = Files.size(destination);
-
+        try (var responseBody = s3Client.getObject(request)) {
+            GetObjectResponse response = responseBody.response();
+            java.io.InputStream verifiedBody = response.contentLength() == null
+                    ? responseBody : new ContentLengthVerifyingInputStream(responseBody, response.contentLength());
+            long sizeBytes = context.workspace().writeAtomic(
+                    destinationPath, verifiedBody, overwrite, createDirectories);
             Map<String, Object> metadata = new LinkedHashMap<>();
-
             metadata.put("operation", "DOWNLOAD");
             metadata.put("bucket", bucket);
             metadata.put("key", key);
-            metadata.put("destinationPath", destination.toString());
+            metadata.put("destinationPath", destinationPath);
             metadata.put("sizeBytes", sizeBytes);
-
             if (response.contentLength() != null) {
-                metadata.put(
-                        "contentLength",
-                        response.contentLength()
-                );
+                metadata.put("contentLength", response.contentLength());
             }
-
             if (response.contentType() != null) {
-                metadata.put(
-                        "contentType",
-                        response.contentType()
-                );
+                metadata.put("contentType", response.contentType());
             }
-
             if (response.eTag() != null) {
-                metadata.put(
-                        "etag",
-                        response.eTag()
-                );
+                metadata.put("etag", response.eTag());
             }
-
-            return PluginResult.builder()
-                    .success(true)
-                    .output("Object downloaded successfully")
-                    .metadata(metadata)
-                    .build();
+            return PluginResult.builder().success(true).output("Object downloaded successfully").metadata(metadata).build();
 
         } catch (S3Exception ex) {
-
-            cleanupPartialFile(destination);
 
             return PluginResult.builder()
                     .success(false)
@@ -174,13 +114,11 @@ public class S3DownloadPlugin implements WorkflowPlugin {
                             "operation", "DOWNLOAD",
                             "bucket", bucket,
                             "key", key,
-                            "destinationPath", destination.toString()
+                            "destinationPath", destinationPath
                     ))
                     .build();
 
         } catch (Exception ex) {
-
-            cleanupPartialFile(destination);
 
             return PluginResult.builder()
                     .success(false)
@@ -194,69 +132,9 @@ public class S3DownloadPlugin implements WorkflowPlugin {
                             "operation", "DOWNLOAD",
                             "bucket", bucket,
                             "key", key,
-                            "destinationPath", destination.toString()
+                            "destinationPath", destinationPath
                     ))
                     .build();
-        }
-    }
-
-    private Path resolveDestination(
-            Path workspaceRoot,
-            String destinationPath) {
-
-        Path resolved = workspaceRoot
-                .resolve(destinationPath)
-                .normalize();
-
-        if (!resolved.startsWith(workspaceRoot)) {
-            throw new PluginConfigurationException(
-                    "S3_DOWNLOAD destination escapes workspace root"
-            );
-        }
-
-        return resolved;
-    }
-
-    private void prepareDestination(
-            Path workspaceRoot,
-            Path destination,
-            boolean createDirectories) throws IOException {
-
-        if (Files.exists(destination) && Files.isDirectory(destination)) {
-            throw new PluginConfigurationException(
-                    "S3_DOWNLOAD destination is a directory: "
-                            + destination
-            );
-        }
-
-        Path parent = destination.getParent();
-
-        if (parent == null) {
-            throw new PluginConfigurationException(
-                    "S3_DOWNLOAD destination must be inside workspace root"
-            );
-        }
-
-        if (!parent.startsWith(workspaceRoot)) {
-            throw new PluginConfigurationException(
-                    "S3_DOWNLOAD destination escapes workspace root"
-            );
-        }
-
-        if (createDirectories) {
-            Files.createDirectories(parent);
-        } else if (!Files.exists(parent)) {
-            throw new PluginConfigurationException(
-                    "S3_DOWNLOAD parent directory does not exist: "
-                            + parent
-            );
-        }
-
-        if (Files.exists(parent) && !Files.isDirectory(parent)) {
-            throw new PluginConfigurationException(
-                    "S3_DOWNLOAD destination parent is not a directory: "
-                            + parent
-            );
         }
     }
 
@@ -268,10 +146,17 @@ public class S3DownloadPlugin implements WorkflowPlugin {
             );
         }
 
+        String parsedValue = path;
+        if (parsedValue.startsWith("workspace:/")) {
+            parsedValue = parsedValue.substring("workspace:/".length());
+            if (parsedValue.isBlank())
+                throw new PluginConfigurationException("S3_DOWNLOAD destinationPath must name a file");
+        }
+
         Path parsed;
 
         try {
-            parsed = Paths.get(path);
+            parsed = Paths.get(parsedValue);
         } catch (Exception ex) {
             throw new PluginConfigurationException(
                     "S3_DOWNLOAD 'destinationPath' is invalid"
@@ -307,23 +192,6 @@ public class S3DownloadPlugin implements WorkflowPlugin {
                                 + "'..' traversal segments"
                 );
             }
-        }
-    }
-
-    private void cleanupPartialFile(Path destination) {
-
-        try {
-
-            if (Files.exists(destination)
-                    && Files.isRegularFile(destination)) {
-
-                Files.deleteIfExists(destination);
-            }
-
-        } catch (IOException ignored) {
-            /*
-             * Preserve the original S3/download failure.
-             */
         }
     }
 
@@ -391,5 +259,39 @@ public class S3DownloadPlugin implements WorkflowPlugin {
         }
 
         return ex.getClass().getSimpleName();
+    }
+
+    /** Fails before writeAtomic publishes if the S3 body length differs from its metadata. */
+    private static final class ContentLengthVerifyingInputStream extends java.io.FilterInputStream {
+        private final long expected;
+        private long received;
+
+        private ContentLengthVerifyingInputStream(java.io.InputStream input, long expected) {
+            super(input);
+            this.expected = expected;
+        }
+
+        @Override public int read() throws IOException {
+            int value = super.read();
+            if (value < 0) verifyEnd();
+            else received++;
+            return value;
+        }
+
+        @Override public int read(byte[] buffer, int offset, int length) throws IOException {
+            int count = super.read(buffer, offset, length);
+            if (count < 0) verifyEnd();
+            else if (count > 0) {
+                received += count;
+                if (received > expected)
+                    throw new IOException("S3 download exceeded response content length");
+            }
+            return count;
+        }
+
+        private void verifyEnd() throws IOException {
+            if (received != expected)
+                throw new IOException("S3 download length did not match response metadata");
+        }
     }
 }

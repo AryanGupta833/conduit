@@ -6,7 +6,8 @@ import lombok.*;
 import org.springframework.scheduling.config.Task;
 
 @Entity
-@Table(name="dependencies")
+@Table(name="dependencies", uniqueConstraints = @UniqueConstraint(
+        name = "uk_dependency_parent_child", columnNames = {"parent_task_id", "child_task_id"}))
 @Getter
 @Setter
 @NoArgsConstructor

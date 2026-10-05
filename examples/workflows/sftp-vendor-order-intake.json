@@ -1,0 +1,92 @@
+{
+  "schemaVersion": 1,
+  "name": "Vendor SFTP Order Intake",
+  "cronExpression": null,
+  "tasks": [
+    {
+      "name": "listInboundFiles",
+      "displayName": "List Vendor Drop",
+      "pluginType": "SFTP",
+      "configurationJson": "{\"operation\":\"LIST\",\"host\":\"sftp.example.com\",\"port\":22,\"username\":\"replace-with-vendor-user\",\"password\":{\"$credential\":\"vendor-sftp-password\"},\"hostKeyFingerprint\":\"SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\",\"remotePath\":\"/incoming\",\"maxEntries\":100,\"timeoutSeconds\":20}",
+      "timeoutSeconds": 30,
+      "maxRetries": 1,
+      "joinCondition": "ALL_PARENTS",
+      "xPosition": 100,
+      "yPosition": 140
+    },
+    {
+      "name": "downloadOrderBatch",
+      "displayName": "Download Daily Order Batch",
+      "pluginType": "SFTP",
+      "configurationJson": "{\"operation\":\"DOWNLOAD\",\"host\":\"sftp.example.com\",\"port\":22,\"username\":\"replace-with-vendor-user\",\"password\":{\"$credential\":\"vendor-sftp-password\"},\"hostKeyFingerprint\":\"SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\",\"remotePath\":\"/incoming/orders.json\",\"localPath\":\"vendor/orders.json\",\"maxBytes\":26214400,\"timeoutSeconds\":20,\"overwrite\":true}",
+      "timeoutSeconds": 45,
+      "maxRetries": 2,
+      "joinCondition": "ALL_PARENTS",
+      "xPosition": 100,
+      "yPosition": 360
+    },
+    {
+      "name": "readOrderBatch",
+      "displayName": "Read Downloaded Order Batch",
+      "pluginType": "FILE_READ",
+      "configurationJson": "{\"workspaceRoot\":\".\",\"path\":\"vendor/orders.json\",\"encoding\":\"UTF-8\"}",
+      "timeoutSeconds": 30,
+      "maxRetries": 0,
+      "joinCondition": "ALL_PARENTS",
+      "xPosition": 380,
+      "yPosition": 360
+    },
+    {
+      "name": "parseOrderBatch",
+      "displayName": "Validate Order JSON",
+      "pluginType": "JSON_TRANSFORM",
+      "configurationJson": "{\"operation\":\"PARSE\",\"input\":\"${tasks.readOrderBatch.output}\"}",
+      "timeoutSeconds": 30,
+      "maxRetries": 0,
+      "joinCondition": "ALL_PARENTS",
+      "xPosition": 660,
+      "yPosition": 360
+    },
+    {
+      "name": "approveOrderBatch",
+      "displayName": "Review Vendor Batch",
+      "pluginType": "HUMAN_TASK",
+      "configurationJson": "{\"type\":\"APPROVAL\",\"title\":\"Approve vendor order batch\",\"description\":\"Review the committed file-list, parsed JSON, row counts, and expected partner. Approve to archive the batch; reject to stop the handoff.\",\"timeoutSeconds\":86400,\"timeoutPolicy\":\"REJECT\",\"reminderAfterSeconds\":3600}",
+      "timeoutSeconds": 86400,
+      "maxRetries": 0,
+      "joinCondition": "ALL_PARENTS",
+      "xPosition": 960,
+      "yPosition": 250
+    },
+    {
+      "name": "archiveApprovedBatch",
+      "displayName": "Archive Approved Batch",
+      "pluginType": "SFTP",
+      "configurationJson": "{\"operation\":\"UPLOAD\",\"host\":\"sftp.example.com\",\"port\":22,\"username\":\"replace-with-vendor-user\",\"password\":{\"$credential\":\"vendor-sftp-password\"},\"hostKeyFingerprint\":\"SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\",\"remotePath\":\"/archive/approved/orders.json\",\"localPath\":\"vendor/orders.json\",\"maxBytes\":26214400,\"timeoutSeconds\":20,\"overwrite\":true}",
+      "timeoutSeconds": 45,
+      "maxRetries": 2,
+      "joinCondition": "ALL_PARENTS",
+      "xPosition": 1260,
+      "yPosition": 140
+    },
+    {
+      "name": "batchRejected",
+      "displayName": "Batch Rejected",
+      "pluginType": "LOG",
+      "configurationJson": "{}",
+      "timeoutSeconds": 30,
+      "maxRetries": 0,
+      "joinCondition": "ALL_PARENTS",
+      "xPosition": 1260,
+      "yPosition": 360
+    }
+  ],
+  "dependencies": [
+    { "parentTask": "downloadOrderBatch", "childTask": "readOrderBatch", "condition": "ON_SUCCESS", "expression": null },
+    { "parentTask": "readOrderBatch", "childTask": "parseOrderBatch", "condition": "ON_SUCCESS", "expression": null },
+    { "parentTask": "listInboundFiles", "childTask": "approveOrderBatch", "condition": "ON_SUCCESS", "expression": null },
+    { "parentTask": "parseOrderBatch", "childTask": "approveOrderBatch", "condition": "ON_SUCCESS", "expression": null },
+    { "parentTask": "approveOrderBatch", "childTask": "archiveApprovedBatch", "condition": "ON_SUCCESS", "expression": null },
+    { "parentTask": "approveOrderBatch", "childTask": "batchRejected", "condition": "ON_FAILURE", "expression": null }
+  ]
+}

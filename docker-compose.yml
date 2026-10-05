@@ -2,6 +2,11 @@ services:
   prometheus:
     image: prom/prometheus:v3.5.0
     container_name: conduit-prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --config.expand-env
+    environment:
+      CONDUIT_METRICS_TOKEN: ${CONDUIT_METRICS_TOKEN:?Set CONDUIT_METRICS_TOKEN for protected metrics scraping}
     ports:
       - "9090:9090"
     volumes:

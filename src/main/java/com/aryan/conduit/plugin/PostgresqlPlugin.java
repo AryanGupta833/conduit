@@ -9,6 +9,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
+import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
+import org.springframework.jdbc.datasource.SingleConnectionDataSource;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import javax.sql.DataSource;
@@ -22,6 +25,10 @@ public class PostgresqlPlugin implements WorkflowPlugin {
     private static final int DEFAULT_QUERY_TIMEOUT_SECONDS = 30;
 
     private final ObjectMapper objectMapper;
+    private PostgresDataSourceRegistry dataSourceRegistry;
+
+    @Autowired(required = false)
+    void setDataSourceRegistry(PostgresDataSourceRegistry dataSourceRegistry) { this.dataSourceRegistry = dataSourceRegistry; }
 
     @Override
     public PluginMetadata metadata() {
@@ -69,6 +76,11 @@ public class PostgresqlPlugin implements WorkflowPlugin {
                                         "minimum", 1,
                                         "default",
                                         DEFAULT_QUERY_TIMEOUT_SECONDS
+                                ),
+                                "namedParameters", Map.of("type", "object", "description", "Named SQL parameters, e.g. :customerId"),
+                                "transaction", Map.of("type", "boolean", "default", false, "description", "Execute this single task query in an explicit transaction"),
+                                "maxRows", Map.of(
+                                        "type", "integer", "minimum", 1, "maximum", 10000, "default", 1000
                                 )
                         )
                 )
@@ -133,6 +145,15 @@ public class PostgresqlPlugin implements WorkflowPlugin {
                 );
             }
         }
+        if (configuration.get("namedParameters") != null && !(configuration.get("namedParameters") instanceof Map<?, ?>))
+            throw new PluginConfigurationException("POSTGRESQL 'namedParameters' must be an object");
+        if (configuration.get("namedParameters") instanceof Map<?, ?> && configuration.get("parameters") instanceof List<?> list && !list.isEmpty())
+            throw new PluginConfigurationException("Use either namedParameters or positional parameters, not both");
+        if (configuration.get("transaction") != null && !(configuration.get("transaction") instanceof Boolean))
+            throw new PluginConfigurationException("POSTGRESQL transaction must be a boolean");
+        Object maxRows = configuration.get("maxRows");
+        if (maxRows != null && (!(maxRows instanceof Number number) || number.intValue() < 1 || number.intValue() > 10000))
+            throw new PluginConfigurationException("POSTGRESQL 'maxRows' must be between 1 and 10000");
     }
 
     @Override
@@ -180,35 +201,48 @@ public class PostgresqlPlugin implements WorkflowPlugin {
                         ? list
                         : List.of();
 
+        java.sql.Connection transactionConnection = null;
         try {
-            DataSource dataSource =
-                    createDataSource(
-                            url,
-                            username,
-                            password
-                    );
+            DataSource baseDataSource = createDataSource(url, username, password);
+            DataSource dataSource = baseDataSource;
+            if (Boolean.TRUE.equals(configuration.get("transaction"))) {
+                transactionConnection = baseDataSource.getConnection();
+                transactionConnection.setAutoCommit(false);
+                dataSource = new SingleConnectionDataSource(transactionConnection, true);
+            }
 
-            JdbcTemplate jdbcTemplate =
-                    new JdbcTemplate(dataSource);
+        JdbcTemplate jdbcTemplate =
+                new JdbcTemplate(dataSource);
 
-            jdbcTemplate.setQueryTimeout(
-                    timeoutSeconds
-            );
+        jdbcTemplate.setQueryTimeout(
+                timeoutSeconds
+        );
+        jdbcTemplate.setMaxRows(configuration.get("maxRows") instanceof Number n ? n.intValue() : 1000);
+        jdbcTemplate.setFetchSize(100);
 
             String normalized =
                     query.trim().toLowerCase();
+            NamedParameterJdbcTemplate named = new NamedParameterJdbcTemplate(dataSource);
+            Map<String, Object> namedParameters = new java.util.LinkedHashMap<>();
+            if (configuration.get("namedParameters") instanceof Map<?, ?> configured) {
+                for (var entry : configured.entrySet()) {
+                    if (!(entry.getKey() instanceof String key) || !key.matches("[A-Za-z_][A-Za-z0-9_]*"))
+                        throw new PluginConfigurationException("POSTGRESQL named parameter names must be SQL identifiers");
+                    namedParameters.put(key, entry.getValue());
+                }
+            }
+            boolean hasNamed = !namedParameters.isEmpty();
 
             if (normalized.startsWith("select")
                     || normalized.startsWith("with")
                     || normalized.startsWith("show")
                     || normalized.startsWith("explain")) {
 
-                List<Map<String, Object>> rows =
-                        jdbcTemplate.queryForList(
-                                query,
-                                parameters.toArray()
-                        );
+                List<Map<String, Object>> rows = hasNamed
+                        ? named.queryForList(query, namedParameters)
+                        : jdbcTemplate.queryForList(query, parameters.toArray());
 
+                if (transactionConnection != null) transactionConnection.commit();
                 return PluginResult.builder()
                         .success(true)
                         .output(
@@ -225,11 +259,8 @@ public class PostgresqlPlugin implements WorkflowPlugin {
                         .build();
             }
 
-            int affectedRows =
-                    jdbcTemplate.update(
-                            query,
-                            parameters.toArray()
-                    );
+            int affectedRows = hasNamed ? named.update(query, namedParameters) : jdbcTemplate.update(query, parameters.toArray());
+            if (transactionConnection != null) transactionConnection.commit();
 
             return PluginResult.builder()
                     .success(true)
@@ -247,14 +278,11 @@ public class PostgresqlPlugin implements WorkflowPlugin {
                     .build();
 
         } catch (Exception ex) {
+            if (transactionConnection != null) try { transactionConnection.rollback(); } catch (java.sql.SQLException ignored) { }
 
             return PluginResult.builder()
                     .success(false)
-                    .output(
-                            ex.getMessage() == null
-                                    ? ex.getClass().getSimpleName()
-                                    : ex.getMessage()
-                    )
+                    .output("PostgreSQL operation failed")
                     .metadata(
                             Map.of(
                                     "operation",
@@ -262,6 +290,8 @@ public class PostgresqlPlugin implements WorkflowPlugin {
                             )
                     )
                     .build();
+        } finally {
+            if (transactionConnection != null) try { transactionConnection.close(); } catch (java.sql.SQLException ignored) { }
         }
     }
 
@@ -271,6 +301,7 @@ public class PostgresqlPlugin implements WorkflowPlugin {
             String password
     ) {
 
+        if (dataSourceRegistry != null) return dataSourceRegistry.get(url, username, password);
         DriverManagerDataSource dataSource =
                 new DriverManagerDataSource();
 

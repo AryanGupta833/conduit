@@ -25,6 +25,8 @@ public interface TaskExecutionRepository
             TaskExecutionStatus status
     );
 
+    long countByStatus(TaskExecutionStatus status);
+
     @Modifying
     @Query("""
         UPDATE TaskExecution t

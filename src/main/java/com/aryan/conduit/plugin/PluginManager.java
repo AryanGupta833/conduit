@@ -29,7 +29,7 @@ public class PluginManager {
     private final List<WorkflowPlugin> builtInPlugins;
     private final Path pluginDirectory;
     private volatile Map<String, WorkflowPlugin> registry = Map.of();
-    private volatile URLClassLoader pluginClassLoader;
+    private final List<URLClassLoader> pluginClassLoaders = new ArrayList<>();
 
     public PluginManager(List<WorkflowPlugin> builtInPlugins,
                          @Value("${conduit.plugins.directory:plugins}") String pluginDirectory) {
@@ -43,18 +43,62 @@ public class PluginManager {
         Map<String, WorkflowPlugin> discovered = new HashMap<>();
         builtInPlugins.forEach(plugin -> register(discovered, plugin));
 
-        List<URL> jarUrls = externalPluginJars();
-        if (!jarUrls.isEmpty()) {
-            pluginClassLoader = new URLClassLoader(jarUrls.toArray(URL[]::new), WorkflowPlugin.class.getClassLoader());
-            try {
-                ServiceLoader.load(WorkflowPlugin.class, pluginClassLoader)
-                        .forEach(plugin -> register(discovered, plugin));
-            } catch (RuntimeException | java.util.ServiceConfigurationError error) {
-                closePluginLoader();
-                throw new IllegalStateException("Unable to load a plugin from " + pluginDirectory + ": " + error.getMessage(), error);
-            }
-        }
+        for (URL jarUrl : externalPluginJars()) loadExternalJar(jarUrl, discovered);
         registry = Map.copyOf(discovered);
+    }
+
+    private void loadExternalJar(URL jarUrl, Map<String, WorkflowPlugin> discovered) {
+        URLClassLoader loader = new URLClassLoader(new URL[]{jarUrl}, WorkflowPlugin.class.getClassLoader());
+        boolean retained = false;
+        try {
+            var providers = ServiceLoader.load(WorkflowPlugin.class, loader).iterator();
+            int failures = 0;
+            while (true) {
+                WorkflowPlugin plugin;
+                try {
+                    if (!providers.hasNext()) break;
+                    plugin = providers.next();
+                    failures = 0;
+                } catch (java.util.ServiceConfigurationError | LinkageError | RuntimeException error) {
+                    log.error("Skipping invalid plugin provider in {}: {}", jarUrl, safeMessage(error));
+                    if (++failures >= 2) break;
+                    continue;
+                }
+                try {
+                    String key = validatedType(plugin);
+                    if (discovered.containsKey(key)) {
+                        log.error("Skipping duplicate external plugin type '{}' from {}", key, jarUrl);
+                        continue;
+                    }
+                    register(discovered, plugin);
+                    retained = true;
+                } catch (RuntimeException | LinkageError error) {
+                    log.error("Skipping invalid plugin from {}: {}", jarUrl, safeMessage(error));
+                }
+            }
+            if (retained) pluginClassLoaders.add(loader);
+        } finally {
+            if (!retained) close(loader);
+        }
+    }
+
+    private String validatedType(WorkflowPlugin plugin) {
+        if (plugin == null) throw new IllegalArgumentException("Plugin provider returned null");
+        PluginMetadata metadata = plugin.metadata();
+        if (metadata == null || metadata.type() == null || !metadata.type().trim().matches("[A-Za-z][A-Za-z0-9_.-]{0,63}"))
+            throw new IllegalArgumentException("Plugin metadata contains an invalid type");
+        if (metadata.displayName().length() > 200 || metadata.description().length() > 2000 || metadata.version().length() > 100)
+            throw new IllegalArgumentException("Plugin metadata exceeds allowed length");
+        return metadata.type().trim().toUpperCase(Locale.ROOT);
+    }
+
+    private String safeMessage(Throwable error) {
+        String message = error.getMessage();
+        return message == null ? error.getClass().getSimpleName() : message.replaceAll("[\\r\\n]", " ");
+    }
+
+    private void close(URLClassLoader loader) {
+        try { loader.close(); } catch (IOException e) { log.warn("Unable to close plugin class loader", e); }
     }
 
     private List<URL> externalPluginJars() {
@@ -110,10 +154,7 @@ public class PluginManager {
 
     @PreDestroy
     public synchronized void closePluginLoader() {
-        if (pluginClassLoader != null) {
-            try { pluginClassLoader.close(); }
-            catch (IOException e) { log.warn("Unable to close plugin class loader", e); }
-            pluginClassLoader = null;
-        }
+        pluginClassLoaders.forEach(this::close);
+        pluginClassLoaders.clear();
     }
 }

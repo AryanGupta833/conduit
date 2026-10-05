@@ -2,5 +2,6 @@ package com.aryan.conduit.execution.entity;
 
 public enum OutboxEventStatus {
     PENDING,
-    PUBLISHED
+    PUBLISHED,
+    FAILED
 }

@@ -11,6 +11,9 @@ import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.stereotype.Component;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.nio.charset.StandardCharsets;
 import java.util.List;
@@ -19,6 +22,14 @@ import java.util.Map;
 @Component
 @RequiredArgsConstructor
 public class RedisPlugin implements WorkflowPlugin {
+
+    private static final Logger log = LoggerFactory.getLogger(RedisPlugin.class);
+
+    private static final int MAX_VALUE_BYTES = 1024 * 1024;
+    private RedisConnectionRegistry connectionRegistry;
+
+    @Autowired(required = false)
+    void setConnectionRegistry(RedisConnectionRegistry connectionRegistry) { this.connectionRegistry = connectionRegistry; }
 
     private static final int DEFAULT_PORT = 6379;
 
@@ -168,6 +179,13 @@ public class RedisPlugin implements WorkflowPlugin {
                 "ttlSeconds",
                 "REDIS 'ttlSeconds' must be a positive integer"
         );
+        validatePositiveInteger(configuration, "timeoutSeconds", "REDIS 'timeoutSeconds' must be a positive integer");
+        Object value = configuration.get("value");
+        if (value != null && value.toString().getBytes(StandardCharsets.UTF_8).length > MAX_VALUE_BYTES)
+            throw new PluginConfigurationException("REDIS 'value' exceeds the 1 MiB limit");
+        Object key = configuration.get("key");
+        if (key != null && key.toString().getBytes(StandardCharsets.UTF_8).length > 512)
+            throw new PluginConfigurationException("REDIS 'key' exceeds the 512 byte limit");
     }
 
     @Override
@@ -214,46 +232,25 @@ public class RedisPlugin implements WorkflowPlugin {
                         configuration.get("key")
                 );
 
+        LettuceConnectionFactory ownedFactory = null;
         try {
-            RedisStandaloneConfiguration redisConfiguration =
-                    new RedisStandaloneConfiguration(
-                            host,
-                            port
-                    );
-
-            redisConfiguration.setDatabase(database);
-
-            if (password != null && !password.isBlank()) {
-                redisConfiguration.setPassword(password);
+            int timeout = configuration.get("timeoutSeconds") instanceof Number n ? n.intValue() : 5;
+            LettuceConnectionFactory connectionFactory;
+            if (connectionRegistry != null) connectionFactory = connectionRegistry.get(host, port, password, database, timeout);
+            else {
+                RedisStandaloneConfiguration redisConfiguration = new RedisStandaloneConfiguration(host, port);
+                redisConfiguration.setDatabase(database);
+                if (password != null && !password.isBlank()) redisConfiguration.setPassword(password);
+                ownedFactory = createTemporaryConnectionFactory(redisConfiguration);
+                connectionFactory = ownedFactory;
             }
-
-            LettuceConnectionFactory connectionFactory =
-                    new LettuceConnectionFactory(
-                            redisConfiguration
-                    );
-
-            connectionFactory.afterPropertiesSet();
-
-            try {
-                return executeOperation(
-                        connectionFactory,
-                        configuration,
-                        operation,
-                        key
-                );
-            } finally {
-                connectionFactory.destroy();
-            }
+            return executeOperation(connectionFactory, configuration, operation, key);
 
         } catch (Exception ex) {
 
             return PluginResult.builder()
                     .success(false)
-                    .output(
-                            ex.getMessage() == null
-                                    ? ex.getClass().getSimpleName()
-                                    : ex.getMessage()
-                    )
+                    .output("Redis operation failed")
                     .metadata(
                             Map.of(
                                     "operation",
@@ -263,7 +260,21 @@ public class RedisPlugin implements WorkflowPlugin {
                             )
                     )
                     .build();
+        } finally {
+            if (ownedFactory != null) {
+                try {
+                    ownedFactory.destroy();
+                } catch (RuntimeException cleanupFailure) {
+                    log.warn("Unable to close temporary Redis connection factory", cleanupFailure);
+                }
+            }
         }
+    }
+
+    LettuceConnectionFactory createTemporaryConnectionFactory(RedisStandaloneConfiguration configuration) {
+        LettuceConnectionFactory factory = new LettuceConnectionFactory(configuration);
+        factory.afterPropertiesSet();
+        return factory;
     }
 
     private PluginResult executeOperation(
@@ -324,6 +335,11 @@ public class RedisPlugin implements WorkflowPlugin {
             String key,
             byte[] keyBytes
     ) {
+
+        Long size = connection.stringCommands().strLen(keyBytes);
+        if (size != null && size > MAX_VALUE_BYTES)
+            return PluginResult.builder().success(false).output("Redis value exceeds the 1 MiB limit")
+                    .metadata(Map.of("operation", OPERATION_GET, "key", key, "resourceLimited", true)).build();
 
         byte[] value =
                 connection.stringCommands()
