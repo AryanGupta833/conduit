@@ -26,4 +26,4 @@ jobs:
           cache: maven
 
       - name: Build project
-        run: ./mvnw --batch-mode --no-transfer-progress -DskipTests package
+        run: ./mvnw --batch-mode --no-transfer-progress -Dmaven.test.skip=true package
